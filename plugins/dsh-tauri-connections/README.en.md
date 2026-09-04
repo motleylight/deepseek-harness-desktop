@@ -1,5 +1,7 @@
 # DSH Connections
 
+Connection rows use the DSH workspace presentation: 14px text, 34px directory rows, 32px session rows, and folder icons that reveal disclosure arrows on hover. Addresses remain available in hover titles and settings. Local workspaces and sessions stay directly below the local connection and above external connections, including asynchronous insertions. Only plugin-owned groups are repositioned; native workspace nodes are not remounted. The desktop connection providers also wrap the imperative settings overlay renderer, sharing the same state with the workspace and connection editors.
+
 The `dsh-tauri-connections` DSH plugin provides concurrent connection groups, connection context menus, and the unified connection list in Desktop Settings → Application.
 
 ## Usage

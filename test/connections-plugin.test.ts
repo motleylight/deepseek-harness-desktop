@@ -40,6 +40,57 @@ afterEach(() => {
 })
 
 describe('connection plugin lifecycle and workspace routing', () => {
+  it('keeps asynchronously inserted local rows between the local header and remote groups without replacing native nodes', async () => {
+    apply({ effect(start: () => () => void) {
+      dispose = start()
+    } })
+    send(state())
+    const tree = document.querySelector('[role="tree"]')!
+    const late = document.createElement('div')
+    late.textContent = 'Late local workspace and sessions'
+    const click = vi.fn()
+    late.addEventListener('click', click)
+    tree.appendChild(late)
+    await vi.waitFor(() => expect(tree.lastElementChild?.id).toBe('dsh-desktop-external-connections'))
+    expect(tree.firstElementChild?.id).toBe('dsh-desktop-managed-connection')
+    expect(late.nextElementSibling?.id).toBe('dsh-desktop-external-connections')
+    late.click()
+    expect(click).toHaveBeenCalledOnce()
+    tree.removeChild(late)
+    await vi.waitFor(() => expect(late.hasAttribute('data-dsh-desktop-managed-child')).toBe(false))
+    tree.prepend(late)
+    await vi.waitFor(() => expect(tree.firstElementChild?.id).toBe('dsh-desktop-managed-connection'))
+    expect(late.parentElement).toBe(tree)
+  })
+
+  it('uses folder disclosures and native-size rows, preserves keyboard focus, and scopes workspace expansion to its connection', () => {
+    apply({ effect(start: () => () => void) {
+      dispose = start()
+    } })
+    const message = state()
+    message.state.connections.push({ id: 'external-2', name: 'Third DSH', url: 'http://127.0.0.1:3083' })
+    Object.assign(message.state.trees, { 'external-2': message.state.trees['external-1'] })
+    send(message)
+    const connection = document.querySelector('[data-connection-id="managed-local"]')!
+    expect(connection.textContent).toBe('Development')
+    expect(connection.getAttribute('title')).toContain('http://127.0.0.1:3081')
+    expect(connection.querySelectorAll('svg')).toHaveLength(2)
+    const styles = document.getElementById('dsh-desktop-workspace-tree-styles')!.textContent
+    expect(styles).toContain('font-size:14px;line-height:20px')
+    expect(styles).toContain('height:32px;gap:0')
+    const workspace = document.querySelector('[data-depth="workspace"]') as HTMLElement
+    workspace.focus()
+    workspace.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    expect(document.querySelectorAll('[data-depth="session"]')).toHaveLength(1)
+    expect(document.activeElement?.getAttribute('data-workspace-key')).toBe(workspace.getAttribute('data-workspace-key'))
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    expect(document.querySelectorAll('[data-depth="session"]')).toHaveLength(2)
+    const session = document.querySelector('[data-depth="session"]') as HTMLElement
+    expect(session.textContent).toBe('Remote session')
+    session.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'open-session', connectionId: 'external-1', sessionId: 'same-session-id' }), 'http://tauri.localhost')
+  })
+
   it('mounts through Cordis, preserves official nodes and restores them on unload', () => {
     const local = document.getElementById('local-workspace')
     apply({ effect(start: () => () => void) {

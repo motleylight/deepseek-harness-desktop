@@ -47,7 +47,7 @@
 - ⚡️ **Zero setup** — First launch needs no Node runtime or Harness core; uses the local environment by default and does not modify your existing system environment.
 - 🔄 **Core update** — Syncs the latest upstream Harness version in-app, so upstream updates take effect without reinstalling; supports managing multiple core versions.
 - 🖥️ **Config** — One dialog for Debug / Profiles / Plugins / Core, with bilingual (zh/en) UI labels and dark-mode support.
-- 🔗 **DSH connections plugin** — [dsh-tauri-connections](plugins/dsh-tauri-connections/README.en.md) provides concurrent endpoints, workspace groups and unified management in Settings → Application. External DSH processes and data remain independently managed.
+- 🔗 **DSH connections plugin** — [dsh-tauri-connections](plugins/dsh-tauri-connections/README.en.md) provides concurrent endpoints, workspace groups matching the original sidebar, and unified management in Settings → Application. Local workspaces and sessions follow the local connection directly; external DSH processes and data remain independently managed.
 - 🐧 **DSH SSH plugin** — [dsh-tauri-ssh](plugins/dsh-tauri-ssh/README.en.md) bundles Linux x64 deployment, SSH tunnels, independent core upgrades and plugin management using system SSH keys. One DSH is managed per machine; disconnecting does not stop the remote service.
 - 🗂️ **Profile isolation** — Profiles are isolated from each other in the config; plugins, patches, and settings stay independent and do not interfere.
 - 🧩 **Plugin management** — The plugin panel manages installed plugins; when something misbehaves it offers upgrade / uninstall entry points plus error details.
