@@ -1,5 +1,6 @@
 /** Mounts the connection groups in the existing DSH workspace tree; returns full teardown. */
 import { isDesktopMessage } from './desktop-message.js'
+import { mountWorkspaceToolbar } from './workspace-toolbar.js'
 
 export function mountWorkspaceTree() {
   if (window === window.top)
@@ -27,6 +28,7 @@ export function mountWorkspaceTree() {
   let menu = null
   let selectedAction = null
   let requestSequence = 0
+  let view = { groupBy: 'workspace', orderBy: 'updated' }
   let state = {
     managed: { id: 'managed-local', name: '', url: '' },
     connections: [],
@@ -218,10 +220,7 @@ export function mountWorkspaceTree() {
     row.appendChild(create('span', 'dsh-desktop-connection-title', session.title))
     function openSession() {
       selectedSessions.set(connectionId, session.id)
-      post({
-        type: 'dsh://workspace-tree:action',
-        action: 'open-session',
-        connectionId,
+      sendAction('open-session', { id: connectionId }, {
         sessionId: session.id,
         sessionTitle: session.title,
       })
@@ -263,12 +262,21 @@ export function mountWorkspaceTree() {
       const treeState = state.trees[connection.id]
       if (!treeState || !Array.isArray(treeState.workspaces))
         continue
+      if (view.groupBy === 'flat') {
+        const sessions = treeState.workspaces.flatMap(workspace => workspace.sessions || [])
+        if (view.orderBy === 'updated')
+          sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        sessions.forEach(session => remoteHost.appendChild(sessionRow(connection.id, session)))
+        continue
+      }
       for (let workspaceIndex = 0; workspaceIndex < treeState.workspaces.length; workspaceIndex++) {
         const workspace = treeState.workspaces[workspaceIndex]
         remoteHost.appendChild(workspaceRow(connection.id, workspace))
         if (collapsedWorkspaces.has(JSON.stringify([connection.id, workspace.id])))
           continue
-        const sessions = Array.isArray(workspace.sessions) ? workspace.sessions : []
+        const sessions = Array.isArray(workspace.sessions) ? [...workspace.sessions] : []
+        if (view.orderBy === 'updated')
+          sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
         for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex++) {
           remoteHost.appendChild(sessionRow(connection.id, sessions[sessionIndex]))
         }
@@ -447,6 +455,22 @@ export function mountWorkspaceTree() {
     attributeFilter: ['class', 'style', 'data-details-collapsed'],
   })
   listen(window, 'resize', reportLayout)
+  function selectManagedSession(event) {
+    const row = event.target instanceof Element && event.target.closest('[data-dsh-desktop-managed-child="true"] [role="treeitem"], [data-dsh-desktop-managed-child="true"][role="treeitem"]')
+    if (!row || !tree?.contains(row))
+      return
+    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ')
+      return
+    post({ type: 'dsh://workspace-tree:action', action: 'select', connectionId: state.managed.id })
+  }
+  listen(window, 'click', selectManagedSession, true)
+  listen(window, 'keydown', selectManagedSession, true)
+  const stopToolbar = mountWorkspaceToolbar(() => state.labels.toolbar || {}, (action) => {
+    post({ type: 'dsh://workspace-tree:toolbar', action })
+  }, (next) => {
+    view = next
+    render()
+  })
   listen(window, 'contextmenu', (event) => {
     const row = event.target instanceof Element && event.target.closest('[data-connection-id]')
     if (!row || !tree || !tree.contains(row))
@@ -477,6 +501,7 @@ export function mountWorkspaceTree() {
     if (disposed)
       return
     disposed = true
+    stopToolbar()
     observer.disconnect()
     listeners.forEach(stop => stop())
     timers.forEach(timer => window.clearTimeout(timer))

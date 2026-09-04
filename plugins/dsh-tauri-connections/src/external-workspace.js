@@ -85,7 +85,7 @@ export function mountExternalWorkspace(openById, parentOrigin, stores) {
         if (workspace.phase !== 'ready' || sessions.phase !== 'ready')
           return
         const archived = new Set(workspace.archivedSessionIds)
-        values = [workspace, { items: sessions.ids.filter(id => !archived.has(id)).map(id => ({ sessionId: id, cwd: sessions.byId[id].cwd, projections: { values: { title: sessions.byId[id].displayTitle } } })) }]
+        values = [workspace, { items: sessions.ids.filter(id => !archived.has(id)).map(id => ({ sessionId: id, cwd: sessions.byId[id].cwd, updatedAt: sessions.byId[id].updatedAt, projections: { values: { title: sessions.byId[id].displayTitle } } })) }]
       }
       else {
         values = await Promise.all([rpc('workspace.list'), rpc('session.list')])
@@ -97,6 +97,7 @@ export function mountExternalWorkspace(openById, parentOrigin, stores) {
         return [String(session.sessionId), {
           id: String(session.sessionId),
           title: titleOf(session),
+          updatedAt: session.updatedAt,
         }]
       }))
       const workspaces = Array.isArray(workspaceList.items) ? workspaceList.items : []
@@ -105,11 +106,13 @@ export function mountExternalWorkspace(openById, parentOrigin, stores) {
       post({
         type: 'dsh://external-workspace:tree',
         tree: {
+          version: stores?.host?.getSnapshot()?.version,
           workspaces: workspaces.slice(0, 100).map((workspace) => {
             const ids = Array.isArray(workspace.sessionIds) ? workspace.sessionIds : []
             return {
               id: String(workspace.workspaceId),
               title: String(workspace.title || workspace.path || workspace.workspaceId),
+              path: workspace.path,
               sessions: ids.slice(0, 500).map((id) => {
                 return sessionMap.get(String(id))
               }).filter(Boolean),

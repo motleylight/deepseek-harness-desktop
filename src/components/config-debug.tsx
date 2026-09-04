@@ -41,9 +41,7 @@ export interface CliLinkStatus {
 
 export function ConfigDebug() {
   const { t, i18n } = useTranslation()
-  const { connectionKind } = useStore(store.harness)
   const { updateInfo } = useStore(store.harnessUpdater)
-  const isManagedConnection = connectionKind === 'managed'
 
   // 端口编辑态：用户尚未输入时为 undefined，由 `data?.port ?? 3080` 提供初值。
   // 初值不写入 state（避免 queryFn 副作用 / effect 同步），渲染与保存时统一
@@ -173,49 +171,75 @@ export function ConfigDebug() {
 
   return (
     <div className="space-y-3">
-      <DshConnectionPanel />
-      <If cond={!isManagedConnection}>
-        <Description>{t('connections.external_settings_hint')}</Description>
-      </If>
-      <If cond={isManagedConnection}>
-        <div className="border-t border-line/30" />
-        <div>
-          <div className="space-y-1">
-            <Info term={t('ui.current_version')}>{info?.app_version ?? '-'}</Info>
-            <Info term={t('ui.dsh_version')}>
-              <span>{info?.dsh_version ?? '-'}</span>
-              <If cond={updateInfo}>
-                <Link className="ml-2 text-[10px] text-accent" onClick={store.harnessUpdater.showToast}>
-                  {t('menu.new_version')}
-                  <ChevronRight className="scale-75" />
-                </Link>
-              </If>
+      <DshConnectionPanel managedDetails={(
+        <div className="space-y-3 border-t border-line/50 pt-3">
+          <Description>{t('ui.local_runtime_hint')}</Description>
+          <div>
+            <div className="space-y-1">
+              <Info term={t('ui.dsh_version')}>
+                <span>{info?.dsh_version ?? '-'}</span>
+                <If cond={updateInfo}>
+                  <Link className="ml-2 text-[10px] text-accent" onClick={store.harnessUpdater.showToast}>
+                    {t('menu.new_version')}
+                    <ChevronRight className="scale-75" />
+                  </Link>
+                </If>
 
-            </Info>
-            <Info term={t('ui.node_version')}>{info?.node_version ? `v${info.node_version}` : '-'}</Info>
-            <Info term={t('ui.platform')}>
-              {info ? `${info.platform} / ${info.arch}` : '-'}
-            </Info>
-            <div className="flex items-center justify-between gap-2 text-xs">
-              <span className="shrink-0 min-w-[30%] text-muted font-medium">{t('ui.data_dir')}</span>
-              <span className="min-w-0 flex items-center gap-1">
-                <span className="truncate font-mono text-[11px] text-muted/80" title={info?.data_dir ?? '-'}>
-                  {info?.data_dir ?? '-'}
+              </Info>
+              <Info term={t('ui.node_version')}>{info?.node_version ? `v${info.node_version}` : '-'}</Info>
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="shrink-0 min-w-[30%] text-muted font-medium">{t('ui.data_dir')}</span>
+                <span className="min-w-0 flex items-center gap-1">
+                  <span className="truncate font-mono text-[11px] text-muted/80" title={info?.data_dir ?? '-'}>
+                    {info?.data_dir ?? '-'}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    isIconOnly
+                    className="size-6 min-w-6 rounded-md"
+                    aria-label={t('app.reveal_dir')}
+                    onPress={() => onRevealDataDir()}
+                  >
+                    <Folder className="size-3.5" />
+                  </Button>
                 </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  isIconOnly
-                  className="size-6 min-w-6 rounded-md"
-                  aria-label={t('app.reveal_dir')}
-                  onPress={() => onRevealDataDir()}
-                >
-                  <Folder className="size-3.5" />
-                </Button>
-              </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-ink">{t('ui.managed_port')}</span>
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="number"
+                variant="secondary"
+                value={String(port)}
+                onChange={e => setPortInput(Number(e.target.value))}
+                className="w-24 h-8 rounded-md [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label={t('ui.managed_port')}
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                className="rounded-md h-8"
+                onPress={() => onSavePort(port)}
+              >
+                {t('buttons.save')}
+              </Button>
             </div>
           </div>
         </div>
+      )}
+      />
+      <>
+        <div className="border-t border-line/30" />
+        <section aria-label={t('ui.desktop_information')} className="space-y-2">
+          <h3 className="text-sm font-medium text-ink">{t('ui.desktop_information')}</h3>
+          <Description>{t('ui.desktop_information_hint')}</Description>
+          <Info term={t('ui.desktop_version')}>{info?.app_version ?? '-'}</Info>
+          <Info term={t('ui.desktop_platform')}>{info ? `${info.platform} / ${info.arch}` : '-'}</Info>
+        </section>
         <div className="border-t border-line/30" />
         <div className="space-y-1.5">
           <ConfigLaunchOnLogin />
@@ -254,27 +278,6 @@ export function ConfigDebug() {
             </If>
           </div>
 
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-ink">{t('ui.managed_port')}</span>
-            <div className="flex items-center gap-1.5">
-              <Input
-                type="number"
-                variant="secondary"
-                value={String(port)}
-                onChange={e => setPortInput(Number(e.target.value))}
-                className="w-24 h-8 rounded-md [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                aria-label={t('ui.managed_port')}
-              />
-              <Button
-                size="sm"
-                variant="primary"
-                className="rounded-md h-8"
-                onPress={() => onSavePort(port)}
-              >
-                {t('buttons.save')}
-              </Button>
-            </div>
-          </div>
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-ink">{t('ui.language')}</span>
             <Select
@@ -331,7 +334,7 @@ export function ConfigDebug() {
 
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-ink">{t('ui.logs')}</span>
+            <span className="text-xs font-medium text-ink">{t('ui.local_logs')}</span>
             <div className="flex gap-1">
               <Button
                 isIconOnly
@@ -357,7 +360,7 @@ export function ConfigDebug() {
             {logs || t('ui.no_logs')}
           </Surface>
         </div>
-      </If>
+      </>
     </div>
   )
 }

@@ -1,4 +1,10 @@
 {
+  "ui.desktop_information": "This Desktop",
+  "ui.desktop_information_hint": "Application details and preferences on this computer, independent of the DSH connection being viewed.",
+  "ui.desktop_version": "Desktop version",
+  "ui.desktop_platform": "Desktop platform",
+  "ui.local_runtime_hint": "Runtime information belongs only to this locally managed DSH connection.",
+  "ui.local_logs": "Locally managed DSH · Service logs",
   "app.wordmark": "HARNESS",
   "app.retry": "Retry",
   "app.open_editor": "Open DSH",

@@ -27,6 +27,7 @@ function ConnectionsHost({ children }: PropsWithChildren) {
       serviceUrl,
       serviceRunning,
       serviceBusy: busyAction !== null,
+      serviceAction: busyAction,
       restart: () => { void store.harness.restart() },
       shutdown: () => { void store.harness.shutdown() },
       start: () => { void store.harness.start() },

@@ -1,4 +1,5 @@
 import { installExternalAdapter } from './external-adapter.js'
+import { mountWorkspaceCommands } from './workspace-commands.js'
 
 const ENTRY_ID = 'dsh-tauri-connections-companion'
 
@@ -25,9 +26,16 @@ export function installExternalClientEntry() {
         factory() {
           return {
             name: ENTRY_ID,
-            inject: controllers ? ['sessions', 'workspaces'] : ['sessions'],
+            inject: ['sessions', 'workspaces', 'connection'],
             apply(ctx) {
-              ctx.effect(() => installExternalAdapter(id => ctx.sessions.open(id), controllers ? { sessions: ctx.sessions.list, workspaces: ctx.workspaces.list } : undefined))
+              ctx.effect(() => {
+                const stopCommands = mountWorkspaceCommands(ctx)
+                const stopAdapter = installExternalAdapter(id => ctx.sessions.open(id), { sessions: ctx.sessions.list, workspaces: ctx.workspaces.list, host: ctx.connection.hostDescription })
+                return () => {
+                  stopCommands()
+                  stopAdapter()
+                }
+              })
             },
           }
         },

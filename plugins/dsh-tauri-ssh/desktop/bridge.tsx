@@ -8,7 +8,7 @@ import { SshActions } from './operations'
 
 export function SshConnectionsBridge({ host, children }: PropsWithChildren<{ host: DesktopConnectionHost }>) {
   const ssh = useSsh()
-  const rows: DshConnection[] = ssh.records.map(record => ({ id: record.id, name: record.name, transport: 'ssh', enabled: record.enabled, url: record.url || 'about:blank', displayUrl: `ssh://${record.user ? `${record.user}@` : ''}${record.host}${record.port ? `:${record.port}` : ''}` }))
+  const rows: DshConnection[] = ssh.records.map(record => ({ id: record.id, name: record.name, transport: 'ssh', enabled: record.enabled, version: record.status?.version, dataDirectory: record.status?.data, url: record.url || 'about:blank', displayUrl: `ssh://${record.user ? `${record.user}@` : ''}${record.host}${record.port ? `:${record.port}` : ''}` }))
   const config = host.config
     ? {
         ...host.config,

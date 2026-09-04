@@ -1,6 +1,8 @@
 /* eslint-disable react/dom-no-unsafe-iframe-sandbox */
 import type { RefObject } from 'react'
 import type { ConnectionsConfig, DshConnection } from './types'
+import type { WorkspaceAction } from './workspace-actions'
+import type { WorkspaceSnapshot } from './workspace-client'
 import { CircleExclamation } from '@gravity-ui/icons'
 import { Button } from '@heroui/react'
 import { invoke } from '@tauri-apps/api/core'
@@ -10,6 +12,8 @@ import { useEvent } from 'react-use'
 import { cn } from 'tailwind-variants'
 import { useConnectionHost } from './host'
 import { ConnectionLoading as Loadable } from './loading'
+import { WorkspaceActions } from './workspace-actions'
+import { createWorkspaceClient, parseSnapshot } from './workspace-client'
 
 export const MANAGED_CONNECTION_ID = 'managed-local'
 
@@ -20,18 +24,7 @@ function getIframeOrigin(ref: RefObject<HTMLIFrameElement | null>) {
 
 type ExternalWorkspaceStatus = 'checking' | 'ready' | 'error'
 
-interface WorkspaceSession {
-  id: string
-  title: string
-}
-
-interface WorkspaceTree {
-  workspaces: Array<{
-    id: string
-    title: string
-    sessions: WorkspaceSession[]
-  }>
-}
+type WorkspaceTree = WorkspaceSnapshot
 
 interface WorkspaceTreeAction {
   source?: string
@@ -90,38 +83,9 @@ function externalOrigin(url: string) {
   }
 }
 
-function truncate(value: unknown, maximum: number) {
-  return typeof value === 'string' ? value.slice(0, maximum) : ''
-}
-
 /** 仅保留工作区树渲染所需的受限字段，外部页返回的数据不作为可信配置。 */
 function sanitizeWorkspaceTree(value: unknown): WorkspaceTree {
-  if (!value || typeof value !== 'object' || !Array.isArray((value as { workspaces?: unknown }).workspaces)) {
-    return { workspaces: [] }
-  }
-  const workspaces = (value as { workspaces: unknown[] }).workspaces.slice(0, 100).flatMap((workspace) => {
-    if (!workspace || typeof workspace !== 'object')
-      return []
-    const source = workspace as { id?: unknown, title?: unknown, sessions?: unknown }
-    const id = truncate(source.id, 160)
-    const title = truncate(source.title, 160)
-    if (!id || !title)
-      return []
-    const sessions = Array.isArray(source.sessions)
-      ? source.sessions.slice(0, 500).flatMap((session) => {
-          if (!session || typeof session !== 'object')
-            return []
-          const item = session as { id?: unknown, title?: unknown }
-          const sessionId = truncate(item.id, 160)
-          const sessionTitle = truncate(item.title, 160)
-          return sessionId && sessionTitle
-            ? [{ id: sessionId, title: sessionTitle }]
-            : []
-        })
-      : []
-    return [{ id, title, sessions }]
-  })
-  return { workspaces }
+  return parseSnapshot(value)
 }
 
 function ExternalDshWorkspace({
@@ -139,6 +103,9 @@ function ExternalDshWorkspace({
   const [error, setError] = useState('')
   const [iframeSrc, setIframeSrc] = useState('')
   const [probeVersion, setProbeVersion] = useState(0)
+  const [frameRef] = useState(() => function setFrame(ref: HTMLIFrameElement | null) {
+    frameChangeRef.current(connection.id, ref)
+  })
 
   frameChangeRef.current = onFrameChange
 
@@ -203,9 +170,7 @@ function ExternalDshWorkspace({
       </If>
       <If cond={status === 'ready'}>
         <iframe
-          ref={(ref) => {
-            frameChangeRef.current(connection.id, ref)
-          }}
+          ref={frameRef}
           className="block h-full w-full border-none bg-load-bg"
           src={iframeSrc}
           allow="accelerometer; ambient-light-sensor; autoplay; battery; camera; clipboard-read; clipboard-write; display-capture; document-domain; encrypted-media; fullscreen; gamepad; geolocation; gyroscope; hid; idle-detection; keyboard-map; magnetometer; microphone; midi; payment; picture-in-picture; publickey-credentials-get; screen-wake-lock; serial; speaker-selection; usb; web-share; xr-spatial-tracking"
@@ -237,16 +202,32 @@ export function DshWorkspaces({
   const config = hostConfig ?? suppliedConfig
   const externalFramesRef = useRef<Record<string, HTMLIFrameElement | null>>({})
   const lastResponseRef = useRef<Record<string, number>>({})
+  const selectionSequence = useRef(0)
   const [externalTrees, setExternalTrees] = useState<Record<string, WorkspaceTree>>({})
   const [sidebarWidth, setSidebarWidth] = useState(280)
+  const [toolbarAction, setToolbarAction] = useState<WorkspaceAction | null>(null)
   const connectedConnections = config?.connections.filter(connection => (
     config.connected_connection_ids.includes(connection.id)
   )) ?? []
   const managedName = config?.managed_connection_name || t('connections.managed_label')
+  const targetsRef = useRef(connectedConnections)
+  targetsRef.current = connectedConnections
+  const [workspaceClient] = useState(() => createWorkspaceClient((id) => {
+    const frame = id === MANAGED_CONNECTION_ID ? managedIframeRef.current : externalFramesRef.current[id]
+    if (id !== MANAGED_CONNECTION_ID && !targetsRef.current.some(item => item.id === id))
+      return
+    if (!frame?.contentWindow)
+      return
+    const origin = externalOrigin(frame.src)
+    if (origin)
+      return { window: frame.contentWindow, url: frame.src, origin }
+  }))
   const refreshStateRef = useRef({ connectedConnections, setStatus, t })
   refreshStateRef.current = { connectedConnections, setStatus, t }
 
   function setExternalFrame(id: string, frame: HTMLIFrameElement | null) {
+    if (!frame || externalFramesRef.current[id] !== frame)
+      workspaceClient.invalidate(id)
     if (frame && externalFramesRef.current[id] !== frame)
       lastResponseRef.current[id] = Date.now()
     if (!frame)
@@ -266,6 +247,11 @@ export function DshWorkspaces({
     )
   }
 
+  function handleExternalLoad(id: string) {
+    workspaceClient.invalidate(id)
+    refreshExternalWorkspace(id)
+  }
+
   function sendWorkspaceTreeState() {
     const origin = getIframeOrigin(managedIframeRef)
     if (!origin || !managedIframeRef.current?.contentWindow)
@@ -283,6 +269,12 @@ export function DshWorkspaces({
         selectedConnectionId,
         trees: externalTrees,
         labels: {
+          toolbar: {
+            'new-session': t('workspace.new_session_scope'),
+            'add-workspace': t('workspace.add_workspace_scope'),
+            'search': t('workspace.search'),
+            'view': t('workspace.view_scope'),
+          },
           rename: t('connections.rename'),
           copyAddress: t('connections.copy_address'),
           editAddress: t('connections.edit_address'),
@@ -328,20 +320,14 @@ export function DshWorkspaces({
     const connection = config?.connections.find(item => item.id === connectionId)
     try {
       if (action === 'select') {
+        selectionSequence.current++
         onSelectConnection(connectionId)
       }
       else if (action === 'open-session' && connection && typeof message.sessionTitle === 'string') {
-        onSelectConnection(connectionId)
-        const frame = externalFramesRef.current[connection.id]
-        const origin = externalOrigin(connection.url)
-        if (!origin || !frame?.contentWindow)
-          throw new Error('CONNECTION_URL_INVALID')
-        frame.contentWindow.postMessage({
-          source: 'dsh-desktop',
-          type: 'dsh://external-workspace:open-session',
-          sessionId: message.sessionId,
-          sessionTitle: message.sessionTitle,
-        }, origin)
+        const sequence = ++selectionSequence.current
+        await workspaceClient.request(connectionId, 'open-session', { sessionId: message.sessionId || '' })
+        if (selectionSequence.current === sequence)
+          onSelectConnection(connectionId)
       }
       else if (action === 'request-rename' || action === 'request-edit' || action === 'request-delete') {
         const target = connectionId === MANAGED_CONNECTION_ID ? { id: connectionId, name: managedName, url: managedServiceUrl } : connection
@@ -376,6 +362,7 @@ export function DshWorkspaces({
   }
 
   function handleMessage(event: MessageEvent<DshWorkspaceMessage>) {
+    workspaceClient.receive(event)
     const data = event.data
     if (!data || typeof data !== 'object')
       return
@@ -395,6 +382,9 @@ export function DshWorkspaces({
       }
       else if (data.type === 'dsh://workspace-tree:action') {
         void handleWorkspaceTreeAction(data)
+      }
+      else if (data.type === 'dsh://workspace-tree:toolbar' && (data.action === 'new-session' || data.action === 'add-workspace' || data.action === 'search')) {
+        setToolbarAction(data.action)
       }
       return
     }
@@ -416,10 +406,12 @@ export function DshWorkspaces({
     setExternalTrees(current => ({ ...current, [connection.id]: snapshot }))
     setStatus(connection.id, data.error
       ? { state: 'error', message: String(data.error) }
-      : { state: 'connected', workspaces: snapshot.workspaces.length, sessions: snapshot.workspaces.reduce((sum, workspace) => sum + workspace.sessions.length, 0) })
+      : { state: 'connected', version: snapshot.version, workspaces: snapshot.workspaces.length, sessions: snapshot.workspaces.reduce((sum, workspace) => sum + workspace.sessions.length, 0) })
   }
 
   useEvent('message', handleMessage)
+  useEffect(() => () => workspaceClient.invalidate(), [workspaceClient])
+  useEffect(() => () => workspaceClient.invalidate(MANAGED_CONNECTION_ID), [workspaceClient, managedIframeKey, managedIframeSrc, managedHealthy])
 
   useEffect(() => {
     sendWorkspaceTreeState()
@@ -457,12 +449,16 @@ export function DshWorkspaces({
   }, [])
 
   function handleManagedIframeLoad() {
+    workspaceClient.invalidate(MANAGED_CONNECTION_ID)
     onManagedIframeLoad()
     sendWorkspaceTreeState()
   }
 
   return (
     <div className="relative min-h-0 flex-1">
+      <If cond={toolbarAction !== null}>
+        <WorkspaceActions key={toolbarAction} action={toolbarAction!} connections={[{ id: MANAGED_CONNECTION_ID, name: managedName, url: managedServiceUrl }, ...connectedConnections]} request={workspaceClient.request} onSelect={onSelectConnection} onClose={() => setToolbarAction(null)} />
+      </If>
       <If cond={managedHealthy} else={<Loadable subtitle={t('connections.managed_connecting')} />}>
         <iframe
           key={managedIframeKey}
@@ -495,7 +491,7 @@ export function DshWorkspaces({
           selected={selectedConnectionId === connection.id}
           sidebarWidth={sidebarWidth}
           onFrameChange={setExternalFrame}
-          onReady={refreshExternalWorkspace}
+          onReady={handleExternalLoad}
         />
       ))}
     </div>

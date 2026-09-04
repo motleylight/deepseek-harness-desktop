@@ -32,7 +32,7 @@ it('adds a bundled Cordis entry before boot without a server package or bundle r
   expect(loader.system.manifest.plugins).toEqual([expect.objectContaining({ id: 'dsh-tauri-connections-companion' })])
   const registration = loader.load.mock.calls[0][0]
   const plugin = registration.factory()
-  expect(plugin.inject).toEqual(['sessions'])
+  expect(plugin.inject).toEqual(['sessions', 'workspaces', 'connection'])
   const effect = vi.fn()
   plugin.apply({ effect })
   expect(effect).toHaveBeenCalledOnce()
@@ -66,7 +66,7 @@ it('uses current controller contributions when the remote has no legacy client r
   dispose = installExternalClientEntry()
   loader.create()
   expect(loader.system.manifest.plugins.at(-1)).toMatchObject({ inject: ['@deepseek-ai/dsh-api-session-controller', '@deepseek-ai/dsh-api-workspace-controller'] })
-  expect(loader.load.mock.calls[0][0].factory().inject).toEqual(['sessions', 'workspaces'])
+  expect(loader.load.mock.calls[0][0].factory().inject).toEqual(['sessions', 'workspaces', 'connection'])
 })
 
 it('restores the original facade on page teardown before boot', () => {

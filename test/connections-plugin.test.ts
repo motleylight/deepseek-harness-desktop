@@ -8,6 +8,7 @@ import { mountExternalWorkspace } from '../plugins/dsh-tauri-connections/src/ext
 
 const host = { postMessage: vi.fn() }
 let dispose: (() => void) | undefined
+const pendingStore = { getSnapshot: () => ({ phase: 'pending' }), subscribe: () => () => {} }
 
 function send(data: unknown, source: unknown = host) {
   window.dispatchEvent(new MessageEvent('message', { source: source as Window, origin: 'http://tauri.localhost', data }))
@@ -40,6 +41,53 @@ afterEach(() => {
 })
 
 describe('connection plugin lifecycle and workspace routing', () => {
+  it('selects the local connection from a native session click without replacing its original handler', () => {
+    const nativeClick = vi.fn()
+    document.getElementById('local-workspace')!.addEventListener('click', nativeClick)
+    apply({ effect(start: () => () => void) {
+      dispose = start()
+    } })
+    const message = state()
+    message.state.selectedConnectionId = 'external-1'
+    send(message)
+    document.getElementById('local-workspace')!.click()
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'select', connectionId: 'managed-local' }), 'http://tauri.localhost')
+    expect(nativeClick).toHaveBeenCalledOnce()
+  })
+
+  it('preserves native toolbar buttons, routes creation and search, and shares native view choices with external rows', async () => {
+    vi.useFakeTimers()
+    const buttons = ['新建会话', '搜索会话', '视图选项', '添加工作区'].map((label) => {
+      const button = document.createElement('button')
+      button.setAttribute('aria-label', label)
+      document.body.prepend(button)
+      return button
+    })
+    const native = buttons.map(() => vi.fn())
+    buttons.forEach((button, index) => button.addEventListener('click', native[index]))
+    apply({ effect(start: () => () => void) {
+      dispose = start()
+    } })
+    const message = state()
+    Object.assign(message.state.labels, { toolbar: { 'new-session': 'Choose target', 'search': 'All search', 'add-workspace': 'Choose DSH', 'view': 'All view' } })
+    send(message)
+    await vi.advanceTimersByTimeAsync(220)
+    buttons.forEach(button => button.click())
+    expect(native[0]).not.toHaveBeenCalled()
+    expect(native[1]).not.toHaveBeenCalled()
+    expect(native[2]).toHaveBeenCalledOnce()
+    expect(native[3]).not.toHaveBeenCalled()
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'dsh://workspace-tree:toolbar', action: 'new-session' }), 'http://tauri.localhost')
+    localStorage.setItem('dsh.workspace.view.v5', JSON.stringify({ groupBy: 'flat', orderBy: 'updated' }))
+    await vi.advanceTimersByTimeAsync(220)
+    expect(document.querySelector('[data-depth="workspace"]')).toBeNull()
+    expect(document.querySelector('[data-depth="session"]')).not.toBeNull()
+    expect(document.getElementById('local-workspace')).not.toBeNull()
+    dispose?.()
+    expect(buttons[0].getAttribute('aria-label')).toBe('新建会话')
+    localStorage.clear()
+    vi.useRealTimers()
+  })
   it('keeps asynchronously inserted local rows between the local header and remote groups without replacing native nodes', async () => {
     apply({ effect(start: () => () => void) {
       dispose = start()
@@ -199,7 +247,7 @@ describe('external DSH companion', () => {
     window.location.href = 'http://127.0.0.1:3182/?dsh-desktop-external=1'
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
-    apply({ sessions: { open: vi.fn() }, effect(start: () => () => void) {
+    apply({ sessions: { open: vi.fn(), list: pendingStore }, workspaces: { list: pendingStore }, connection: { hostDescription: pendingStore }, effect(start: () => () => void) {
       dispose = start()
     } })
     window.dispatchEvent(new MessageEvent('message', { source: host as unknown as Window, origin: 'https://untrusted.example', data: { source: 'dsh-desktop', type: 'dsh://external-workspace:refresh' } }))
@@ -211,7 +259,7 @@ describe('external DSH companion', () => {
     window.location.href = 'http://127.0.0.1:3182/?dsh-desktop-external=1'
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
     const open = vi.fn()
-    apply({ sessions: { open }, effect(start: () => () => void) {
+    apply({ sessions: { open, list: pendingStore }, workspaces: { list: pendingStore }, connection: { hostDescription: pendingStore }, effect(start: () => () => void) {
       dispose = start()
     } })
     send({ source: 'dsh-desktop', type: 'dsh://external-workspace:refresh' })

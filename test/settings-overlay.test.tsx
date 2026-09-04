@@ -19,7 +19,7 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn(async (command: string) => 
   if (command === 'read_service_logs')
     return ''
   if (command === 'get_runtime_info')
-    return { app_version: 'test', dsh_version: 'test', node_version: 'test', platform: 'windows', arch: 'x64', service_url: 'http://127.0.0.1:3181', data_dir: 'test', log_path: 'test' }
+    return { app_version: 'desktop-only-version', dsh_version: 'local-only-version', node_version: 'local-only-node', platform: 'windows', arch: 'x64', service_url: 'http://127.0.0.1:3181', data_dir: 'local-only-data', log_path: 'test' }
   if (command === 'get_cli_link_status')
     return { enabled: false, shim_exists: false, path_registered: false, user_dsh_preserved: false, bin_dir: '', shim_path: '' }
   return false
@@ -62,6 +62,14 @@ it('opens the real settings overlay with connection and SSH state, closes and re
     await click('Open settings')
     await act(async () => new Promise(resolve => setTimeout(resolve, 30)))
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Local regression DSH')
+    const local = document.querySelector('section[aria-label="Local regression DSH"]')!
+    expect(local.textContent).toContain('local-only-version')
+    expect(local.textContent).toContain('local-only-node')
+    expect(local.textContent).toContain('local-only-data')
+    expect(local.textContent).not.toContain('desktop-only-version')
+    const remote = document.querySelector('section[aria-label="Linux regression DSH"]')!
+    expect(remote.textContent).not.toContain('local-only')
+    expect(document.querySelector('[aria-label="This Desktop"]')?.textContent).toContain('desktop-only-version')
     await click('Plugins')
     expect(document.querySelector('[role="dialog"] select')).not.toBeNull()
     await click('DSH')

@@ -1,12 +1,13 @@
+import type { ReactNode } from 'react'
 import type { DshConnection } from './types'
-import { Ellipsis, Plus } from '@gravity-ui/icons'
-import { Button, Chip, Description, Dropdown, Label, Switch } from '@heroui/react'
+import { ArrowRotateRight, Ellipsis, Play, Plus, Power } from '@gravity-ui/icons'
+import { Button, Chip, Description, Dropdown, Label, Spinner, Switch } from '@heroui/react'
 import { useState } from 'react'
 import { If } from 'react-if-lite'
 import { useConnectionHost } from './host'
 
 /** One connection list owns both the state display and management actions in Application. */
-export function DshConnectionPanel() {
+export function DshConnectionPanel({ managedDetails }: { managedDetails?: ReactNode }) {
   const host = useConnectionHost()
   const { config, t, statuses, available, mutateConnection } = host
   const { editConnection: setEditor, deleteConnection: setDeleting } = host
@@ -61,7 +62,7 @@ export function DshConnectionPanel() {
           : !connected ? 'connections.disconnected' : status?.state === 'connected' ? 'connections.connected' : status?.state === 'error' ? 'connections.unavailable' : 'connections.checking'
         const color = isManaged ? (host.serviceRunning ? 'success' : 'default') : connected && status?.state === 'connected' ? 'success' : status?.state === 'error' ? 'danger' : 'default'
         return (
-          <div key={connection.id} className="space-y-2 rounded-md border border-line p-3">
+          <section key={connection.id} aria-label={connection.name} className="space-y-2 rounded-md border border-line p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -87,14 +88,42 @@ export function DshConnectionPanel() {
             </div>
             <If cond={isManaged}>
               <Description>{t('connections.managed')}</Description>
-              <div className="flex flex-wrap gap-2">
-                <If cond={host.serviceRunning} else={<Button size="sm" variant="tertiary" onPress={host.start} isDisabled={host.serviceBusy}>{t('connections.start')}</Button>}>
-                  <Button size="sm" variant="tertiary" onPress={host.restart} isDisabled={host.serviceBusy}>{t('connections.restart')}</Button>
-                  <Button size="sm" variant="danger" onPress={host.shutdown} isDisabled={host.serviceBusy}>{t('connections.stop')}</Button>
+              <div className="flex items-center gap-2">
+                <If
+                  cond={host.serviceRunning}
+                  else={(
+                    <Button size="sm" variant="tertiary" className="flex-1 rounded-md" onPress={host.start} isDisabled={host.serviceBusy}>
+                      <Play className="size-3.5" />
+                      {t('connections.start')}
+                    </Button>
+                  )}
+                >
+                  <Button size="sm" variant="tertiary" className="flex-1 rounded-md" onPress={host.restart} isDisabled={host.serviceBusy}>
+                    <If cond={host.serviceAction === 'restart'} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
+                    {t('connections.restart')}
+                  </Button>
+                  <Button size="sm" variant="danger" className="flex-1 rounded-md" onPress={host.shutdown} isDisabled={host.serviceBusy}>
+                    <If cond={host.serviceAction === 'shutdown'} then={<Spinner size="sm" color="current" />} else={<Power className="size-3.5" />} />
+                    {t('connections.stop')}
+                  </Button>
                 </If>
               </div>
+              {managedDetails}
             </If>
             <If cond={!isManaged}>
+              <dl className="space-y-1 text-xs">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">{t(connection.transport === 'ssh' ? 'connections.dsh_version' : 'connections.reported_version')}</dt>
+                  <dd className="font-mono">{connection.version || (connected ? status?.version : undefined) || t('connections.not_reported')}</dd>
+                </div>
+                <If cond={Boolean(connection.dataDirectory)}>
+                  <div className="flex justify-between gap-3">
+                    <dt className="shrink-0 text-muted">{t('connections.data_directory')}</dt>
+                    <dd className="break-all font-mono">{connection.dataDirectory}</dd>
+                  </div>
+                </If>
+              </dl>
+              <Description>{t(connection.transport === 'ssh' ? 'connections.ssh_info_source' : 'connections.http_info_source')}</Description>
               {host.extension?.renderActions?.(connection)}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Description>
@@ -111,7 +140,7 @@ export function DshConnectionPanel() {
               </div>
               <If cond={connected && status?.state === 'error'}><Description className="break-words text-danger">{status?.message}</Description></If>
             </If>
-          </div>
+          </section>
         )
       })}
       <If cond={!available && host.serviceRunning}><Description>{t('connections.plugin_inactive')}</Description></If>

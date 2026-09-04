@@ -2,7 +2,7 @@ import type { ConnectionsConfig } from '../../plugins/dsh-tauri-connections/desk
 import { mockIPC } from '@tauri-apps/api/mocks'
 
 // Manual browser harness: real DSH client modules, in-memory native configuration adapter.
-let config: ConnectionsConfig = { connections: [{ id: 'external', name: '测试环境', url: 'http://127.0.0.1:3183' }], connected_connection_ids: ['external'], managed_connection_name: '开发环境', active_connection_id: 'managed-local' }
+let config: ConnectionsConfig = { connections: [{ id: 'external', name: '测试环境', url: 'http://127.0.0.1:3183' }, { id: 'current', name: '预发布环境', url: 'http://127.0.0.1:3186' }], connected_connection_ids: ['external', 'current'], managed_connection_name: '开发环境', active_connection_id: 'managed-local' }
 mockIPC(async (command, payload) => {
   const args = payload as Record<string, unknown>
   if (command === 'get_dsh_theme')
@@ -24,7 +24,7 @@ mockIPC(async (command, payload) => {
   if (command === 'get_app_config')
     return { ...config, installed: true, port: 3181, zoom_factor: 1, close_action: 'exit' }
   if (command === 'probe_dsh_connection') {
-    if (!String(args.url).includes(':3183'))
+    if (!/:318[36]/.test(String(args.url)))
       throw new Error('TEST_ENDPOINT_UNREACHABLE')
     return args.url
   }

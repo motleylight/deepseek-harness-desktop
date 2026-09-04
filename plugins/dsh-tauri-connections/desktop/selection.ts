@@ -17,7 +17,6 @@ export function useDshConnectionSelection() {
     setRequested(id)
     void mutateConnection('select_dsh_connection', { id }).catch((error) => {
       console.error('[dsh-tauri-connections] selection failed:', error)
-      setRequested(undefined)
     })
   }
   return { selectedConnectionId, selectConnection }

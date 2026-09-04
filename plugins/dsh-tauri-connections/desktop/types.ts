@@ -6,6 +6,8 @@ export interface DshConnection {
   displayUrl?: string
   transport?: 'ssh'
   enabled?: boolean
+  version?: string
+  dataDirectory?: string
 }
 
 export interface ConnectionExtension {
@@ -28,6 +30,7 @@ export interface ConnectionStatus {
   message?: string
   workspaces?: number
   sessions?: number
+  version?: string
 }
 
 export interface DesktopConnectionHost {
@@ -40,6 +43,7 @@ export interface DesktopConnectionHost {
   serviceUrl: string
   serviceRunning: boolean
   serviceBusy: boolean
+  serviceAction?: string | null
   restart: () => void
   shutdown: () => void
   start: () => void

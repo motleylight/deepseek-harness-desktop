@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DshConnectionsProvider } from '../plugins/dsh-tauri-connections/desktop/context'
 import { ConnectionEditor } from '../plugins/dsh-tauri-connections/desktop/editor'
 import { DshConnectionPanel } from '../plugins/dsh-tauri-connections/desktop/panel'
+import { WorkspaceActions } from '../plugins/dsh-tauri-connections/desktop/workspace-actions'
 import { DshWorkspaces } from '../plugins/dsh-tauri-connections/desktop/workspaces'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
@@ -42,6 +43,42 @@ async function click(element: HTMLElement) {
 }
 
 describe('connection editor and settings', () => {
+  it('opens each production toolbar dialog without replacing the application, and requires an explicit create target', async () => {
+    const request = vi.fn()
+    for (const action of ['new-session', 'add-workspace', 'search'] as const) {
+      await act(async () => root.render(
+        <DshConnectionsProvider host={host}>
+          <p>Application remains mounted</p>
+          <WorkspaceActions key={action} action={action} connections={connections} request={request} onSelect={vi.fn()} onClose={vi.fn()} />
+        </DshConnectionsProvider>,
+      ))
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+      expect(container.textContent).toContain('Application remains mounted')
+      if (action !== 'search')
+        expect(button(action === 'new-session' ? 'New session' : 'Add workspace').disabled).toBe(true)
+    }
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('groups search results by connection and opens duplicate ids only on the clicked connection', async () => {
+    const select = vi.fn()
+    const close = vi.fn()
+    const request = vi.fn(async (id: string, command: string) => command === 'search' ? { items: [{ id: 'same-id', title: `Result ${id}`, workspace: 'Same workspace', snippet: '' }], hasMore: false } : {})
+    await act(async () => root.render(<DshConnectionsProvider host={host}><WorkspaceActions action="search" connections={connections} request={request} onSelect={select} onClose={close} /></DshConnectionsProvider>))
+    const input = document.querySelector('input')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'query')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => new Promise(resolve => setTimeout(resolve, 300)))
+    expect(document.querySelector('section[aria-label="DSH A"]')?.textContent).toContain('Result a')
+    expect(document.querySelector('section[aria-label="DSH B"]')?.textContent).toContain('Result b')
+    const result = [...document.querySelectorAll('button')].find(button => button.textContent?.includes('Result b'))!
+    await click(result)
+    expect(request).toHaveBeenCalledWith('b', 'open-session', { sessionId: 'same-id' }, expect.any(AbortSignal))
+    expect(select).toHaveBeenCalledExactlyOnceWith('b')
+    expect(close).toHaveBeenCalledOnce()
+  })
   it('renames a saved offline connection without probing it', async () => {
     const close = vi.fn()
     await act(async () => root.render(<DshConnectionsProvider host={host}><ConnectionEditor target={{ kind: 'rename', connection: connections[0] }} onClose={close} /></DshConnectionsProvider>))

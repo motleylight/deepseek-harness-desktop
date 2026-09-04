@@ -1,4 +1,10 @@
 {
+  "ui.desktop_information": "当前 Desktop",
+  "ui.desktop_information_hint": "以下是当前电脑上的桌面应用信息与偏好，不随所查看的 DSH 连接变化。",
+  "ui.desktop_version": "Desktop 版本",
+  "ui.desktop_platform": "Desktop 运行平台",
+  "ui.local_runtime_hint": "本机托管 DSH 的运行信息，仅属于此连接。",
+  "ui.local_logs": "本机托管 DSH · 服务日志",
   "app.wordmark": "HARNESS",
   "app.retry": "重试",
   "app.open_editor": "打开 DSH",

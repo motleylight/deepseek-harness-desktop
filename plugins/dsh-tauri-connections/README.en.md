@@ -12,9 +12,15 @@ Add an HTTP(S) endpoint under Settings → Application → DSH connections, then
 
 This package is not a general browser multi-server client. Ordinary browser visits are unchanged. Older Desktop versions need an upgrade to supply configuration and the multi-frame host; do not combine their old workspace injection with this plugin.
 
-External DSH servers do not need a plugin installation. Before an embedded page boots, Desktop registers its bundled client in the page's Cordis startup. The session API opens exact IDs, including duplicate titles and unrendered sessions, without writing remote profiles or installation directories. This integration uses DSH's `__ModuleLoader__.create()` and client plugin list, verified with 0.1.1-rc.2. Older or incompatible loaders fall back to unique visible title matching; uncertain targets report an open failure instead of guessing.
+External DSH servers do not need a plugin installation. Before an embedded page boots, Desktop registers its bundled client in the page's Cordis startup. The session API opens exact IDs, including duplicate titles and unrendered sessions, without writing remote profiles or installation directories. This integration uses DSH's `__ModuleLoader__.create()` and client plugin list. Incompatible loaders or service APIs report an error instead of guessing by title or falling back to the local connection.
 
 ## Components and lifecycle
+
+Native toolbar styling is preserved. New session and Add workspace require a target connection; new sessions also require a workspace on that connection. Search spans connected DSH instances and labels each result with its connection and workspace. Unavailable content indexes retain title matches with a warning. The native grouping and ordering menu applies to local and external rows. Clicking a session selects its owning connection without requiring a header click first.
+
+Local restart and shutdown controls, DSH version, Node runtime, data directory and port belong to the managed connection card. Desktop version and preferences are separate. SSH installation versions come from that host's check; HTTP service-reported versions are not installation versions. Missing remote information is never filled from local runtime data.
+
+Creation, search and directory browsing execute through the target page's public client services. Requests are pinned to a frame and URL; timeout, disconnect and address changes never fall back to local or automatically retry writes. Only the managed connection may open the local native folder picker. External instances use their own browser directory capability or accept a manually entered host path.
 
 - `./client`: standard DSH client entry. `ctx.effect` owns tree groups and restores original workspace nodes, menus, observers and listeners on disposal.
 - `./desktop`: build-time Desktop entry providing management, editing, shared status and concurrent iframes. Desktop retains native storage, probing and managed-process adapters.

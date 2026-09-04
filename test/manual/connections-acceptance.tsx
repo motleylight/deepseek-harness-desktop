@@ -14,7 +14,7 @@ function Workspaces() {
   const { data: config } = useAppConfig()
   const ref = useRef<HTMLIFrameElement>(null)
   const { selectedConnectionId, selectConnection } = useDshConnectionSelection()
-  return <DshWorkspaces config={config} selectedConnectionId={selectedConnectionId} onSelectConnection={selectConnection} managedIframeRef={ref} managedIframeSrc="http://127.0.0.1:3181/?dsh-desktop-managed=1" managedIframeKey={0} managedHealthy managedIframeError={false} managedServiceUrl="http://127.0.0.1:3181" onManagedIframeLoad={() => {}} onManagedIframeError={() => {}} onManagedRetry={() => {}} />
+  return <DshWorkspaces config={config} selectedConnectionId={selectedConnectionId} onSelectConnection={selectConnection} managedIframeRef={ref} managedIframeSrc="http://127.0.0.1:3184/?dsh-desktop-managed=1" managedIframeKey={0} managedHealthy managedIframeError={false} managedServiceUrl="http://127.0.0.1:3184" onManagedIframeLoad={() => {}} onManagedIframeError={() => {}} onManagedRetry={() => {}} />
 }
 function App() {
   useDshTheme()
@@ -29,7 +29,7 @@ function App() {
     </main>
   )
 }
-store.harness.serviceUrl = 'http://127.0.0.1:3181'
+store.harness.serviceUrl = 'http://127.0.0.1:3184'
 store.harness.serviceRunning = true
 store.setting.language = 'zh-CN'
 void import('../../src/i18n').then(() => {
