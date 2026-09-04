@@ -222,6 +222,11 @@ pub fn enable_notification_permissions(
         ]
     }
 
+    fn is_managed_connection(parent: &tauri::WebviewWindow<tauri::Wry>) -> bool {
+        crate::config::get_store_dat_setting(parent.app_handle()).active_connection_id
+            == crate::config::MANAGED_CONNECTION_ID
+    }
+
     fn should_allow_permission(kind: COREWEBVIEW2_PERMISSION_KIND) -> bool {
         matches!(
             kind,
@@ -294,6 +299,11 @@ pub fn enable_notification_permissions(
         let _ = frame3.add_PermissionRequested(
             &FramePermissionRequestedEventHandler::create(Box::new(move |_, args| {
                 if let Some(args) = args {
+                    if !is_managed_connection(&parent_for_frame) {
+                        args.SetState(COREWEBVIEW2_PERMISSION_STATE_DEFAULT)?;
+                        args.SetHandled(true)?;
+                        return Ok(());
+                    }
                     let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
                     args.PermissionKind(&mut kind)?;
 
@@ -323,6 +333,9 @@ pub fn enable_notification_permissions(
 
         let _ = frame3.add_ContentLoading(
             &FrameContentLoadingEventHandler::create(Box::new(move |_, _| {
+                if !is_managed_connection(&parent) {
+                    return Ok(());
+                }
                 // 通知桥、导航桥、样式桥、剪贴板图片桥与缩放快捷键桥需要 iframe 上下文执行。
                 for script in [
                     crate::desktop::notification::NOTIFICATION_SHIM_JS,

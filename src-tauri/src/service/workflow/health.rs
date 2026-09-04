@@ -56,6 +56,17 @@ fn all_client_modules_ready(ready: usize, total: usize) -> bool {
     total > 0 && ready == total
 }
 
+/// 本地地址不能经过系统 HTTP(S) 代理；远程地址仍沿用用户或企业网络的代理设置。
+fn is_loopback_connection(url: &reqwest::Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        let host = host.trim_matches(['[', ']']);
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    })
+}
+
 /// 健康检查（通过 Rust 代理，避免 WebView CORS 问题）
 pub async fn proxy_health_check(port: u16) -> Result<String, String> {
     if !has_owned_process() {
@@ -96,9 +107,43 @@ pub async fn proxy_health_check(port: u16) -> Result<String, String> {
     ))
 }
 
+/// 探测用户保存的外部 Harness 地址是否可访问。
+///
+/// 外部连接不属于桌面端的进程树，因此不检查 `has_owned_process`，也不复用本地
+/// 启动阶段的客户端模块探测；这里只确认用户指定的服务地址返回成功响应。本地地址
+/// 直连以免被环境代理重写，远程地址保持用户的 HTTP(S) 代理设置。
+pub async fn probe_dsh_connection(url: &str) -> Result<String, String> {
+    let url = config::normalize_dsh_connection_url(url)?;
+    let parsed =
+        reqwest::Url::parse(&url).map_err(|error| format!("CONNECTION_URL_INVALID: {error}"))?;
+    let client_builder = reqwest::Client::builder().timeout(config::HEALTH_CHECK_TIMEOUT);
+    let client_builder = if is_loopback_connection(&parsed) {
+        client_builder.no_proxy()
+    } else {
+        client_builder
+    };
+    let client = client_builder
+        .build()
+        .map_err(|error| format!("CONNECTION_PROBE_CLIENT_FAILED: {error}"))?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|error| format!("CONNECTION_UNAVAILABLE: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "CONNECTION_UNAVAILABLE: server returned {}",
+            response.status()
+        ));
+    }
+    Ok(format!("reachable - {}", response.status()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     /// 回归：无持有进程在“launch 仍在进行”（守卫未释放）时应返回可重试的
     /// `HARNESS_NOT_READY`，而不是把临时状态当成崩溃的 `HARNESS_NOT_OWNED` —
@@ -116,5 +161,40 @@ mod tests {
         assert!(!all_client_modules_ready(1, 2));
         assert!(all_client_modules_ready(2, 2));
         assert!(!all_client_modules_ready(0, 0));
+    }
+
+    #[test]
+    fn loopback_addresses_bypass_the_environment_proxy() {
+        assert!(is_loopback_connection(
+            &reqwest::Url::parse("http://127.0.0.1:3080/").unwrap()
+        ));
+        assert!(is_loopback_connection(
+            &reqwest::Url::parse("http://[::1]:3080/").unwrap()
+        ));
+        assert!(is_loopback_connection(
+            &reqwest::Url::parse("http://localhost:3080/").unwrap()
+        ));
+        assert!(!is_loopback_connection(
+            &reqwest::Url::parse("https://dsh.example.com/").unwrap()
+        ));
+    }
+
+    #[tokio::test]
+    async fn external_probe_accepts_a_loopback_address_without_a_scheme() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+        });
+
+        assert_eq!(
+            probe_dsh_connection(&address.to_string()).await.unwrap(),
+            "reachable - 200 OK"
+        );
     }
 }

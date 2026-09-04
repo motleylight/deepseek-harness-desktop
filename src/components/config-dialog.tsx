@@ -6,6 +6,8 @@ import { useDisclosure } from '@overlastic/react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Case, If, Switch } from 'react-if-lite'
+import { useStore } from 'valtio-define'
+import { store } from '@/store'
 import { useDshPlugins } from '../hooks/use-dsh-plugins'
 import { ConfigCore } from './config-core'
 import { ConfigDebug } from './config-debug'
@@ -19,6 +21,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
   const { t } = useTranslation()
   // 异常插件数：在「插件」Tab 上给出红点/角标，方便用户直接感知出问题的插件
   const { plugins } = useDshPlugins()
+  const { connectionKind } = useStore(store.harness)
   const abnormalCount = plugins.filter(p => p.error != null).length
 
   const navs = [
@@ -26,9 +29,10 @@ export function ConfigDialog(props: ConfigDialogProps) {
     { label: t('config.profiles'), value: 'profiles', icon: PersonPencil },
     { label: t('config.plugins'), value: 'plugins', icon: Puzzle },
     { label: t('config.harness'), value: 'harness', icon: Cpu },
-  ]
+  ].filter(item => connectionKind === 'managed' || item.value === 'application')
 
   const [activeTab, setActiveTab] = useState('application')
+  const visibleTab = connectionKind === 'managed' ? activeTab : 'application'
 
   useEventBus('config:dialog:hidden').on(disclosure.cancel)
 
@@ -47,7 +51,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
               <aside className="w-[164px]">
                 <nav className="flex flex-col gap-2 w-full">
                   {navs.map((item) => {
-                    const isActive = item.value === activeTab
+                    const isActive = item.value === visibleTab
                     return (
                       <button
                         key={item.value}
@@ -70,7 +74,7 @@ export function ConfigDialog(props: ConfigDialogProps) {
                 </nav>
               </aside>
               <div className="flex flex-col flex-1 overflow-auto min-h-0 pr-2.5">
-                <Switch value={activeTab} as="div">
+                <Switch value={visibleTab} as="div">
                   <Case cond="application">
                     <ConfigDebug />
                   </Case>

@@ -15,7 +15,9 @@ pub fn backup_profile(
 ) -> Result<backup::BackupInfo, String> {
     backup::create_backup(
         &app_handle,
-        backup::BackupOptions { include_credentials },
+        backup::BackupOptions {
+            include_credentials,
+        },
     )
 }
 

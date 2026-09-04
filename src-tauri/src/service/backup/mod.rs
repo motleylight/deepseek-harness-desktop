@@ -145,10 +145,7 @@ fn now_timestamp() -> String {
 ///
 /// 把 `$DSH_HOME` 打包到 `$DSH_HOME/.backups/<timestamp>.tar.gz`，更新清单，
 /// 并按保留份数裁剪。
-pub fn create_backup(
-    app_handle: &AppHandle,
-    options: BackupOptions,
-) -> Result<BackupInfo, String> {
+pub fn create_backup(app_handle: &AppHandle, options: BackupOptions) -> Result<BackupInfo, String> {
     let backup_dir = get_backup_dir(app_handle);
     let timestamp = now_timestamp();
     let filename = archive_filename(&timestamp);
@@ -157,9 +154,7 @@ pub fn create_backup(
 
     archive::create_archive(&source, &dest, options.include_credentials)?;
 
-    let size = fs::metadata(&dest)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let size = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
 
     let info = BackupInfo {
         timestamp: timestamp.clone(),
@@ -169,8 +164,8 @@ pub fn create_backup(
     };
 
     // 更新清单：清单损坏时中止写入，避免用空清单覆盖导致既有索引丢失
-    let mut manifest = read_manifest(&backup_dir)
-        .map_err(|e| format!("BACKUP_MANIFEST_CORRUPT: {e}"))?;
+    let mut manifest =
+        read_manifest(&backup_dir).map_err(|e| format!("BACKUP_MANIFEST_CORRUPT: {e}"))?;
     manifest.backups.push(ManifestEntry {
         timestamp: info.timestamp.clone(),
         path: info.path.clone(),
@@ -193,7 +188,7 @@ pub fn list_backups(app_handle: &AppHandle) -> Vec<BackupInfo> {
         Ok(m) => m,
         Err(e) => {
             log::error!("[backup] list_backups: manifest unreadable: {e}");
-            return vec![]
+            return vec![];
         }
     };
     manifest
@@ -258,9 +253,8 @@ pub fn restore_backup(
         RestoreMode::AsNew => {
             // 创建新档案目录：$DSH_HOME/profiles/<timestamp>
             let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
-            fs::create_dir_all(&profiles_root).map_err(|e| {
-                format!("BACKUP_RESTORE_MKDIR_PROFILES: {e}")
-            })?;
+            fs::create_dir_all(&profiles_root)
+                .map_err(|e| format!("BACKUP_RESTORE_MKDIR_PROFILES: {e}"))?;
             let new_dir = profiles_root.join(format!("restored-{timestamp}"));
             archive::extract_archive(&archive_path, &new_dir)?;
         }

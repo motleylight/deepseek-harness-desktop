@@ -108,6 +108,53 @@ pub async fn update_app_config(
     Ok(setting)
 }
 
+/// 保存一个仅供嵌入和访问的外部 Harness 连接。
+#[tauri::command]
+pub async fn add_dsh_connection(
+    app_handle: AppHandle,
+    name: String,
+    url: String,
+) -> Result<config::Setting, String> {
+    let setting = config::add_dsh_connection(&app_handle, name, url)?;
+    crate::service::backup::schedule::mark_config_changed(&app_handle);
+    Ok(setting)
+}
+
+/// 更新一个已保存的外部 Harness 连接。
+#[tauri::command]
+pub async fn update_dsh_connection(
+    app_handle: AppHandle,
+    id: String,
+    name: String,
+    url: String,
+) -> Result<config::Setting, String> {
+    let setting = config::update_dsh_connection(&app_handle, id, name, url)?;
+    crate::service::backup::schedule::mark_config_changed(&app_handle);
+    Ok(setting)
+}
+
+/// 切换当前显示的 Harness 连接，不启动或停止外部服务。
+#[tauri::command]
+pub async fn select_dsh_connection(
+    app_handle: AppHandle,
+    id: String,
+) -> Result<config::Setting, String> {
+    let setting = config::select_dsh_connection(&app_handle, id)?;
+    crate::service::backup::schedule::mark_config_changed(&app_handle);
+    Ok(setting)
+}
+
+/// 删除不再需要的外部 Harness 连接。
+#[tauri::command]
+pub async fn remove_dsh_connection(
+    app_handle: AppHandle,
+    id: String,
+) -> Result<config::Setting, String> {
+    let setting = config::remove_dsh_connection(&app_handle, id)?;
+    crate::service::backup::schedule::mark_config_changed(&app_handle);
+    Ok(setting)
+}
+
 /// 查询桌面应用是否已注册为随当前用户登录启动。
 ///
 /// 系统启动项才是真实来源：用户可能在 Windows 任务管理器或其它平台的系统设置中

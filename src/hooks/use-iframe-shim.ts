@@ -46,11 +46,13 @@ interface PluginBootMessage {
   type?: 'dsh://plugin-boot:stalled' | 'dsh://plugin-boot:ready'
 }
 
-export function useIframeShim(iframeRef: RefObject<HTMLIFrameElement | null>) {
+export function useIframeShim(iframeRef: RefObject<HTMLIFrameElement | null>, enabled: boolean) {
   const isMounted = useMountedState()
 
   // 接收 iframe 的「原生通知」请求，转发给 Tauri 命令弹出系统通知
   function handleMessage(event: MessageEvent<NativeNotificationMessage>) {
+    if (!enabled)
+      return
     const data = event.data
     if (!data || typeof data !== 'object' || data.source !== 'dsh-notification-bridge') {
       return
@@ -83,6 +85,8 @@ export function useIframeShim(iframeRef: RefObject<HTMLIFrameElement | null>) {
   // postMessage 到宿主，宿主经 `report_plugin_error` 持久化并推送新列表，
   // 「插件」面板据此展示 danger 图标与更新/卸载入口。
   function handlePluginError(event: MessageEvent<PluginErrorMessage>) {
+    if (!enabled)
+      return
     const data = event.data
     if (!data || typeof data !== 'object' || data.source !== 'dsh-plugin-error-bridge') {
       return
@@ -111,6 +115,8 @@ export function useIframeShim(iframeRef: RefObject<HTMLIFrameElement | null>) {
   // 接收 iframe 的「剪贴板图片回退」请求：读取系统剪贴板图片并把 PNG data URL 回传，
   // 使 Linux/WebKitGTK 下 dsh iframe 的贴图（paste 事件拿不到图片）能走原生剪贴板通路。
   function handleClipboardImage(event: MessageEvent<ClipboardImageRequest>) {
+    if (!enabled)
+      return
     const data = event.data
     if (!data || typeof data !== 'object' || data.source !== 'dsh-clipboard-image-bridge') {
       return
@@ -144,6 +150,8 @@ export function useIframeShim(iframeRef: RefObject<HTMLIFrameElement | null>) {
   }
 
   function handlePluginBoot(event: MessageEvent<PluginBootMessage>) {
+    if (!enabled)
+      return
     const data = event.data
     if (!data || typeof data !== 'object' || data.source !== 'dsh-plugin-boot-bridge') {
       return
@@ -171,6 +179,8 @@ export function useIframeShim(iframeRef: RefObject<HTMLIFrameElement | null>) {
 
   // 系统通知点击 → 通知 iframe 聚焦对应会话
   useEffect(() => {
+    if (!enabled)
+      return
     let unlisten: (() => void) | undefined
     void listen<{ sessionId?: string | null, title?: string, tag?: string }>(
       'dsh-notification-clicked',
@@ -202,10 +212,12 @@ export function useIframeShim(iframeRef: RefObject<HTMLIFrameElement | null>) {
       unlisten?.()
     }
   // eslint-disable-next-line react/exhaustive-deps
-  }, [])
+  }, [enabled])
 
   // 将窗口可见性（最小化/隐藏/失焦）同步给 iframe，便于其暂停渲染
   function syncVisibility() {
+    if (!enabled)
+      return
     void (async () => {
       try {
         const appWindow = getCurrentWindow()

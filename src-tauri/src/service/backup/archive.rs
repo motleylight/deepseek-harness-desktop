@@ -52,9 +52,9 @@ fn append_dir_filtered(
     for entry in fs::read_dir(dir).map_err(|e| format!("BACKUP_ARCHIVE_READDIR: {e}"))? {
         let entry = entry.map_err(|e| format!("BACKUP_ARCHIVE_ENTRY: {e}"))?;
         let path = entry.path();
-        let name = path.file_name().ok_or_else(|| {
-            format!("BACKUP_ARCHIVE_NO_NAME: {}", path.display())
-        })?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| format!("BACKUP_ARCHIVE_NO_NAME: {}", path.display()))?;
         let archived = rel.join(name);
         // 根相对路径（用于排除判断）
         let root_rel = path
@@ -70,9 +70,10 @@ fn append_dir_filtered(
             append_dir_filtered(builder, &path, source, &archived, include_credentials)?;
         } else {
             builder
-                .append_file(&archived, &mut fs::File::open(&path).map_err(|e| {
-                    format!("BACKUP_ARCHIVE_OPEN: {e}")
-                })?)
+                .append_file(
+                    &archived,
+                    &mut fs::File::open(&path).map_err(|e| format!("BACKUP_ARCHIVE_OPEN: {e}"))?,
+                )
                 .map_err(|e| format!("BACKUP_ARCHIVE_APPEND_FILE: {e}"))?;
         }
     }
@@ -84,15 +85,17 @@ fn append_dir_filtered(
 /// 把 `source` 目录打包到 `dest` 文件。`include_credentials` 控制是否包含
 /// `.credentials.yaml`。始终排除 `.backups/`、`.harness.pid`、
 /// `node_modules/.modules.yaml`。
-pub fn create_archive(
-    source: &Path,
-    dest: &Path,
-    include_credentials: bool,
-) -> Result<(), String> {
+pub fn create_archive(source: &Path, dest: &Path, include_credentials: bool) -> Result<(), String> {
     let tar_gz = fs::File::create(dest).map_err(|e| format!("BACKUP_ARCHIVE_CREATE: {e}"))?;
     let enc = flate2::write::GzEncoder::new(tar_gz, flate2::Compression::default());
     let mut archive = tar::Builder::new(enc);
-    append_dir_filtered(&mut archive, source, source, Path::new("."), include_credentials)?;
+    append_dir_filtered(
+        &mut archive,
+        source,
+        source,
+        Path::new("."),
+        include_credentials,
+    )?;
     archive
         .finish()
         .map_err(|e| format!("BACKUP_ARCHIVE_FINISH: {e}"))?;
@@ -108,12 +111,17 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
     let tar_gz = fs::File::open(archive).map_err(|e| format!("BACKUP_EXTRACT_OPEN: {e}"))?;
     let dec = flate2::read::GzDecoder::new(tar_gz);
     let mut archive = tar::Archive::new(dec);
-    let dest_real = dunce::canonicalize(dest)
-        .map_err(|e| format!("BACKUP_EXTRACT_CANONICALIZE_DEST: {e}"))?;
+    let dest_real =
+        dunce::canonicalize(dest).map_err(|e| format!("BACKUP_EXTRACT_CANONICALIZE_DEST: {e}"))?;
 
-    for entry in archive.entries().map_err(|e| format!("BACKUP_EXTRACT_ENTRIES: {e}"))? {
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("BACKUP_EXTRACT_ENTRIES: {e}"))?
+    {
         let mut entry = entry.map_err(|e| format!("BACKUP_EXTRACT_ENTRY: {e}"))?;
-        let path = entry.path().map_err(|e| format!("BACKUP_EXTRACT_PATH: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("BACKUP_EXTRACT_PATH: {e}"))?;
 
         // 拒绝含 `..` 组件的条目（规范化前第一道闸）
         if path
@@ -133,18 +141,15 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
             dunce::canonicalize(&joined)
                 .map_err(|e| format!("BACKUP_EXTRACT_CANONICALIZE_ENTRY: {e}"))?
         } else {
-            let parent = joined.parent().ok_or_else(|| {
-                format!("BACKUP_EXTRACT_NO_PARENT: entry {:?}", path)
-            })?;
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("BACKUP_EXTRACT_MKDIR_PARENT: {e}"))?;
-            let parent_real =
-                dunce::canonicalize(parent).map_err(|e| {
-                    format!("BACKUP_EXTRACT_CANONICALIZE_PARENT: {e}")
-                })?;
-            let name = joined.file_name().ok_or_else(|| {
-                format!("BACKUP_EXTRACT_NO_FILENAME: entry {:?}", path)
-            })?;
+            let parent = joined
+                .parent()
+                .ok_or_else(|| format!("BACKUP_EXTRACT_NO_PARENT: entry {:?}", path))?;
+            fs::create_dir_all(parent).map_err(|e| format!("BACKUP_EXTRACT_MKDIR_PARENT: {e}"))?;
+            let parent_real = dunce::canonicalize(parent)
+                .map_err(|e| format!("BACKUP_EXTRACT_CANONICALIZE_PARENT: {e}"))?;
+            let name = joined
+                .file_name()
+                .ok_or_else(|| format!("BACKUP_EXTRACT_NO_FILENAME: entry {:?}", path))?;
             parent_real.join(name)
         };
         if !joined_real.starts_with(&dest_real) {
@@ -175,7 +180,10 @@ fn list_archive_entries(archive: &Path) -> Result<Vec<String>, String> {
     let dec = flate2::read::GzDecoder::new(tar_gz);
     let mut archive = tar::Archive::new(dec);
     let mut entries = Vec::new();
-    for entry in archive.entries().map_err(|e| format!("BACKUP_LIST_ENTRIES: {e}"))? {
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("BACKUP_LIST_ENTRIES: {e}"))?
+    {
         let entry = entry.map_err(|e| format!("BACKUP_LIST_ENTRY: {e}"))?;
         let path = entry.path().map_err(|e| format!("BACKUP_LIST_PATH: {e}"))?;
         entries.push(path.to_string_lossy().replace('\\', "/"));
@@ -201,10 +209,10 @@ mod tests {
 
     /// 计算与 source 同级的归档目标路径。
     fn archive_dest(source: &Path) -> PathBuf {
-        source
-            .parent()
-            .unwrap()
-            .join(format!("{}.tar.gz", source.file_name().unwrap().to_str().unwrap()))
+        source.parent().unwrap().join(format!(
+            "{}.tar.gz",
+            source.file_name().unwrap().to_str().unwrap()
+        ))
     }
 
     /// 创建临时目录并写入若干文件作为测试夹具。
@@ -258,10 +266,7 @@ mod tests {
 
     #[test]
     fn credentials_excluded_by_default() {
-        let source = setup_source_dir(&[
-            (".credentials.yaml", "key: secret"),
-            ("data.txt", "ok"),
-        ]);
+        let source = setup_source_dir(&[(".credentials.yaml", "key: secret"), ("data.txt", "ok")]);
         let dest = archive_dest(&source);
         create_archive(&source, &dest, false).unwrap();
         let entries = list_archive_entries(&dest).unwrap();
@@ -275,10 +280,7 @@ mod tests {
 
     #[test]
     fn credentials_included_when_opted_in() {
-        let source = setup_source_dir(&[
-            (".credentials.yaml", "key: secret"),
-            ("data.txt", "ok"),
-        ]);
+        let source = setup_source_dir(&[(".credentials.yaml", "key: secret"), ("data.txt", "ok")]);
         let dest = archive_dest(&source);
         create_archive(&source, &dest, true).unwrap();
         let entries = list_archive_entries(&dest).unwrap();
@@ -297,7 +299,8 @@ mod tests {
         create_archive(&source, &dest_gz, false).unwrap();
 
         // 还原到新目录
-        let restore_dir = std::env::temp_dir().join(format!("dsh-backup-restore-{}", unique_suffix()));
+        let restore_dir =
+            std::env::temp_dir().join(format!("dsh-backup-restore-{}", unique_suffix()));
         extract_archive(&dest_gz, &restore_dir).unwrap();
 
         let restored = fs::read_to_string(restore_dir.join("config.yaml")).unwrap();
@@ -346,7 +349,9 @@ mod tests {
         // pad to 512 boundary
         let pad = (512 - (data.len() % 512)) % 512;
         if pad > 0 {
-            writer.write_all(&vec![0u8; pad]).map_err(|e| e.to_string())?;
+            writer
+                .write_all(&vec![0u8; pad])
+                .map_err(|e| e.to_string())?;
         }
         Ok(())
     }

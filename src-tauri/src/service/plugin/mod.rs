@@ -42,6 +42,7 @@ pub mod watch;
 
 pub(crate) use crate::service::profile::ensure_profile_pnpm_policy;
 pub use cancel::cancel;
+pub use disable::{disable, enable};
 pub(crate) use install::harness_prefer_bundled_pnpm;
 pub(crate) use install::uninstall_deprecated_plugins;
 pub use install::{install, remove, update};
@@ -51,7 +52,6 @@ pub(crate) use internal::cancel as cancel_internal_plugins;
 pub(crate) use internal::ensure as ensure_internal_plugins;
 pub use preset::repo_url_of;
 pub(crate) use preset::{current_preset_hash, preinstall_pending, remove_legacy_bundled_plugins};
-pub use disable::{disable, enable};
 pub use recovery::{
     detect as detect_recovery, uninstall as uninstall_recovery, PluginRecoveryInfo,
 };

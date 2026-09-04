@@ -37,6 +37,20 @@ fn windows_drag_browser_args() -> &'static str {
     WINDOWS_DRAG_BROWSER_ARGS
 }
 
+/// 仅向桌面端托管的 Harness frame 注入脚本。
+///
+/// 外部连接也运行在同一个 WebView 中，但它们没有本地 IPC 权限，也不能接收
+/// 桌面端桥接脚本。托管地址由前端写入此查询参数；每次切换 iframe 都会重新验证。
+#[cfg(not(windows))]
+fn managed_iframe_script(script: &str) -> String {
+    format!(
+        r#"(function () {{
+  if (new URL(location.href).searchParams.get("dsh-desktop-managed") !== "1") return;
+  {script}
+}})();"#
+    )
+}
+
 /// setup app
 pub fn setup(app_handle: tauri::AppHandle) {
     // 升级清理：内部插件资源已迁至 resources/internal-plugins；旧安装可能保留
@@ -73,8 +87,10 @@ pub fn setup(app_handle: tauri::AppHandle) {
     let app_for_start = app_handle.clone();
     tauri::async_runtime::spawn(async move {
         let setting = crate::config::get_store_dat_setting(&app_for_start);
-        if !setting.auto_start {
-            log::debug!("auto_start disabled, skipping startup");
+        if !setting.auto_start
+            || setting.active_connection_id != crate::config::MANAGED_CONNECTION_ID
+        {
+            log::debug!("managed Harness auto_start skipped");
             return;
         }
         if let Err(e) = crate::service::workflow::start(app_for_start).await {
@@ -417,17 +433,31 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
     });
 
     // 非 Windows（macOS/Linux）没有 WebView2 的 FrameCreated/ContentLoading 流程，
-    // 直接用 Tauri 的 initialization_script_for_all_frames 把兼容桥、通知桥、导航桥、
-    // 样式桥与缩放快捷键桥注入所有 frame（脚本均带幂等守卫，重复注入安全）。
+    // 因此使用初始化脚本，但只向 URL 标为桌面端托管的 Harness frame 注入兼容桥、
+    // 通知桥、导航桥、样式桥与缩放快捷键桥。
     #[cfg(not(windows))]
     let webview_builder = webview_builder
-        .initialization_script_for_all_frames(crate::desktop::compat::ABORT_SIGNAL_ANY_SHIM_JS)
-        .initialization_script_for_all_frames(crate::desktop::notification::NOTIFICATION_SHIM_JS)
-        .initialization_script_for_all_frames(crate::desktop::nav::NAV_SHIM_JS)
-        .initialization_script_for_all_frames(crate::desktop::style::IFRAME_STYLES_JS)
-        .initialization_script_for_all_frames(crate::desktop::paste::PASTE_SHIM_JS)
-        .initialization_script_for_all_frames(crate::desktop::plugin_boot::PLUGIN_BOOT_RELOAD_JS)
-        .initialization_script_for_all_frames(crate::desktop::zoom::ZOOM_SHORTCUT_BRIDGE_JS);
+        .initialization_script_for_all_frames(managed_iframe_script(
+            crate::desktop::compat::ABORT_SIGNAL_ANY_SHIM_JS,
+        ))
+        .initialization_script_for_all_frames(managed_iframe_script(
+            crate::desktop::notification::NOTIFICATION_SHIM_JS,
+        ))
+        .initialization_script_for_all_frames(managed_iframe_script(
+            crate::desktop::nav::NAV_SHIM_JS,
+        ))
+        .initialization_script_for_all_frames(managed_iframe_script(
+            crate::desktop::style::IFRAME_STYLES_JS,
+        ))
+        .initialization_script_for_all_frames(managed_iframe_script(
+            crate::desktop::paste::PASTE_SHIM_JS,
+        ))
+        .initialization_script_for_all_frames(managed_iframe_script(
+            crate::desktop::plugin_boot::PLUGIN_BOOT_RELOAD_JS,
+        ))
+        .initialization_script_for_all_frames(managed_iframe_script(
+            crate::desktop::zoom::ZOOM_SHORTCUT_BRIDGE_JS,
+        ));
 
     let webview_window = webview_builder.build()?;
     let zoom_factor = crate::config::get_store_dat_setting(app).zoom_factor;
@@ -539,10 +569,15 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::remove_core,
         crate::bridge::update_local_core,
         crate::bridge::proxy_health_check,
+        crate::bridge::probe_dsh_connection,
         crate::bridge::get_runtime_info,
         crate::bridge::runtime_ready,
         crate::bridge::get_app_config,
         crate::bridge::update_app_config,
+        crate::bridge::add_dsh_connection,
+        crate::bridge::update_dsh_connection,
+        crate::bridge::select_dsh_connection,
+        crate::bridge::remove_dsh_connection,
         crate::bridge::get_launch_on_login,
         crate::bridge::set_launch_on_login,
         crate::bridge::set_webview_zoom,

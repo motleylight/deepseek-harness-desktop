@@ -563,10 +563,7 @@ mod tests {
     /// - 不在 bundles 且不在禁用清单 → bundled=false, disabled=false（未加载，启用会失败）
     #[test]
     fn parse_plugins_distinguishes_disabled_from_unloaded() {
-        let dir = std::env::temp_dir().join(format!(
-            "dsh-watch-disabled-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("dsh-watch-disabled-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir.join("node_modules")).unwrap();
         let manifest = serde_json::json!({
@@ -587,7 +584,11 @@ mod tests {
         for id in ["dsh-loaded", "dsh-disabled", "dsh-unloaded"] {
             let pkg_dir = dir.join("node_modules").join(id);
             std::fs::create_dir_all(&pkg_dir).unwrap();
-            std::fs::write(pkg_dir.join("package.json"), format!(r#"{{"name":"{id}"}}"#)).unwrap();
+            std::fs::write(
+                pkg_dir.join("package.json"),
+                format!(r#"{{"name":"{id}"}}"#),
+            )
+            .unwrap();
         }
         // 仅 dsh-disabled 写入禁用清单。
         let disabled = serde_json::json!({

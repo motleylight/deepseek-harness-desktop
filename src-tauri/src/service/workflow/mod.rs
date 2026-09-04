@@ -23,7 +23,7 @@ mod launch;
 mod process;
 mod sweep;
 
-pub use health::proxy_health_check;
+pub use health::{probe_dsh_connection, proxy_health_check};
 pub use install::install;
 pub use launch::{launch, restart, start};
 pub use process::{

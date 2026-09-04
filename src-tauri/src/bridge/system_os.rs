@@ -18,6 +18,12 @@ pub async fn proxy_health_check(app_handle: AppHandle) -> Result<String, String>
     crate::service::workflow::proxy_health_check(port).await
 }
 
+/// 测试一个外部 Harness 地址是否可访问；地址校验由配置层统一执行。
+#[tauri::command]
+pub async fn probe_dsh_connection(url: String) -> Result<String, String> {
+    crate::service::workflow::probe_dsh_connection(&url).await
+}
+
 /// 运行时/版本/诊断信息（侧边栏展示）
 #[tauri::command]
 pub async fn get_runtime_info(app_handle: AppHandle) -> Result<config::RuntimeInfo, String> {

@@ -47,8 +47,7 @@ fn save_disabled(profile: &Path, map: &HashMap<String, DisabledEntry>) -> Result
     }
     let json =
         serde_json::to_string_pretty(map).map_err(|e| format!("DISABLED_RENDER_FAILED: {e}"))?;
-    fs::write(&path, format!("{json}\n"))
-        .map_err(|e| format!("DISABLED_WRITE_FAILED: {e}"))
+    fs::write(&path, format!("{json}\n")).map_err(|e| format!("DISABLED_WRITE_FAILED: {e}"))
 }
 
 /// 仅从 `dsh.profile.bundles` 移除指定插件（不动 `dependencies`）。
@@ -141,10 +140,10 @@ pub(crate) fn disable_plugin_at(profile: &Path, id: &str) -> Result<(), String> 
     }
     fs_guard::validate_id(id)?;
     let manifest_path = profile.join("package.json");
-    let content = fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("DISABLE_READ_MANIFEST: {e}"))?;
-    let mut manifest: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("DISABLE_PARSE_MANIFEST: {e}"))?;
+    let content =
+        fs::read_to_string(&manifest_path).map_err(|e| format!("DISABLE_READ_MANIFEST: {e}"))?;
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("DISABLE_PARSE_MANIFEST: {e}"))?;
     if !is_in_dependencies(&manifest, id) {
         return Err(format!(
             "DISABLE_NOT_INSTALLED: plugin {id} is not installed"
@@ -199,10 +198,10 @@ fn rollback_enable(profile: &Path, id: &str) {
 pub(crate) fn enable_plugin_at(profile: &Path, id: &str) -> Result<(), String> {
     fs_guard::validate_id(id)?;
     let manifest_path = profile.join("package.json");
-    let content = fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("ENABLE_READ_MANIFEST: {e}"))?;
-    let mut manifest: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("ENABLE_PARSE_MANIFEST: {e}"))?;
+    let content =
+        fs::read_to_string(&manifest_path).map_err(|e| format!("ENABLE_READ_MANIFEST: {e}"))?;
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("ENABLE_PARSE_MANIFEST: {e}"))?;
     if !is_in_dependencies(&manifest, id) {
         return Err(format!(
             "ENABLE_NOT_INSTALLED: plugin {id} is not installed"
@@ -295,7 +294,9 @@ mod tests {
         assert!(manifest["dependencies"]["dshmarket"].is_string());
         // bundles 中已移除
         let bundles = manifest["dsh"]["profile"]["bundles"].as_array().unwrap();
-        assert!(!bundles.iter().any(|b| b.as_str() == Some("dsh-better-sidebar")));
+        assert!(!bundles
+            .iter()
+            .any(|b| b.as_str() == Some("dsh-better-sidebar")));
         assert!(bundles.iter().any(|b| b.as_str() == Some("dshmarket")));
 
         let _ = fs::remove_dir_all(&profile);
@@ -307,7 +308,9 @@ mod tests {
         disable_plugin_at(&profile, "dsh-better-sidebar").unwrap();
 
         let map = load_disabled(&profile);
-        let entry = map.get("dsh-better-sidebar").expect("disabled entry exists");
+        let entry = map
+            .get("dsh-better-sidebar")
+            .expect("disabled entry exists");
         assert_eq!(entry.reason, "user");
         assert!(!entry.disabled_at.is_empty());
         // 时间戳是纯数字字符串
@@ -324,7 +327,9 @@ mod tests {
 
         let manifest = read_manifest(&profile);
         let bundles = manifest["dsh"]["profile"]["bundles"].as_array().unwrap();
-        assert!(bundles.iter().any(|b| b.as_str() == Some("dsh-better-sidebar")));
+        assert!(bundles
+            .iter()
+            .any(|b| b.as_str() == Some("dsh-better-sidebar")));
 
         let _ = fs::remove_dir_all(&profile);
     }

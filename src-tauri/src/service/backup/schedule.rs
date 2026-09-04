@@ -219,7 +219,11 @@ mod tests {
         let setting = setting_with(true, 7, true, false);
 
         // 启动触发前
-        assert!(should_trigger(&state, &setting, time::OffsetDateTime::now_utc()));
+        assert!(should_trigger(
+            &state,
+            &setting,
+            time::OffsetDateTime::now_utc()
+        ));
 
         // 记录备份时间
         record_backup_time(time::OffsetDateTime::now_utc());

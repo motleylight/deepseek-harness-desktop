@@ -35,13 +35,14 @@ export function Webview() {
     iframeKey,
     iframeSrc,
     serviceUrl,
+    connectionKind,
     recovery,
   } = useStore(store.harness)
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
   useDesktopZoom(iframeRef)
-  useIframeShim(iframeRef)
+  useIframeShim(iframeRef, connectionKind === 'managed')
 
   if (status === 'error') {
     return (

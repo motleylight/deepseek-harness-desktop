@@ -278,17 +278,27 @@ pub fn remove(app_handle: &AppHandle, id: &str) -> Result<(), String> {
 /// - `name` 为 `None` 时按 source_id 自动递增；`Some` 时规范化并校验冲突；
 /// - 复制后清除搬入的 pnpm 元数据（`.modules.yaml`），并重写 manifest name 为
 ///   `dsh-profile-<new-id>`。
-pub fn clone(app_handle: &AppHandle, source_id: &str, name: Option<&str>) -> Result<Profile, String> {
+pub fn clone(
+    app_handle: &AppHandle,
+    source_id: &str,
+    name: Option<&str>,
+) -> Result<Profile, String> {
     let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
     clone_with_root(&profiles_root, source_id, name)
 }
 
 /// 克隆实现（以 `profiles_root` 为根，便于单测注入临时目录）。
-pub fn clone_with_root(profiles_root: &Path, source_id: &str, name: Option<&str>) -> Result<Profile, String> {
+pub fn clone_with_root(
+    profiles_root: &Path,
+    source_id: &str,
+    name: Option<&str>,
+) -> Result<Profile, String> {
     fs_guard::validate_id(source_id)?;
     let src_dir = fs_guard::join_safe(profiles_root, source_id)?;
     if !src_dir.is_dir() {
-        return Err(format!("PROFILE_NOT_FOUND: profile {source_id} does not exist"));
+        return Err(format!(
+            "PROFILE_NOT_FOUND: profile {source_id} does not exist"
+        ));
     }
 
     let new_id = match name {
@@ -299,7 +309,9 @@ pub fn clone_with_root(profiles_root: &Path, source_id: &str, name: Option<&str>
             }
             let id = normalize_profile_id(trimmed);
             if id.is_empty() {
-                return Err("PROFILE_INVALID_NAME: profile name has no usable characters".to_string());
+                return Err(
+                    "PROFILE_INVALID_NAME: profile name has no usable characters".to_string(),
+                );
             }
             if id.len() > 64 {
                 return Err("PROFILE_NAME_TOO_LONG: profile id exceeds 64 characters".to_string());
@@ -385,10 +397,9 @@ fn rewrite_manifest_name(dir: &Path, new_id: &str) -> Result<(), String> {
             serde_json::Value::String(format!("dsh-profile-{new_id}")),
         );
     }
-    let rendered = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| format!("MANIFEST_RENDER: {e}"))?;
-    fs::write(&path, format!("{rendered}\n"))
-        .map_err(|e| format!("MANIFEST_WRITE: {e}"))
+    let rendered =
+        serde_json::to_string_pretty(&manifest).map_err(|e| format!("MANIFEST_RENDER: {e}"))?;
+    fs::write(&path, format!("{rendered}\n")).map_err(|e| format!("MANIFEST_WRITE: {e}"))
 }
 
 /// 初始化档案目录：与官方 `dsh-app-boot::initProfile` 的产物一致
@@ -489,7 +500,11 @@ mod clone_tests {
         let root = tmp.join("profiles");
         scaffold_source(&root, "web");
         std::fs::create_dir_all(root.join("web-1")).unwrap();
-        std::fs::write(root.join("web-1/package.json"), r#"{"name":"dsh-profile-web-1"}"#).unwrap();
+        std::fs::write(
+            root.join("web-1/package.json"),
+            r#"{"name":"dsh-profile-web-1"}"#,
+        )
+        .unwrap();
 
         let profile = clone_with_root(&root, "web", None).unwrap();
         assert_eq!(profile.id, "web-2");
@@ -507,7 +522,8 @@ mod clone_tests {
         let profile = clone_with_root(&root, "web", None).unwrap();
         let dst = root.join(&profile.id);
         let manifest: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(dst.join("package.json")).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(dst.join("package.json")).unwrap())
+                .unwrap();
         assert_eq!(manifest["name"], format!("dsh-profile-{}", profile.id));
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -536,7 +552,10 @@ mod clone_tests {
         let root = tmp.join("profiles");
 
         let err = clone_with_root(&root, "nonexistent", None).unwrap_err();
-        assert!(err.contains("PROFILE_NOT_FOUND"), "expected PROFILE_NOT_FOUND, got: {err}");
+        assert!(
+            err.contains("PROFILE_NOT_FOUND"),
+            "expected PROFILE_NOT_FOUND, got: {err}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -549,12 +568,19 @@ mod clone_tests {
         scaffold_source(&root, "web");
         let nm = root.join("web/node_modules");
         std::fs::create_dir_all(&nm).unwrap();
-        std::fs::write(nm.join(".modules.yaml"), "lockfileVersion: '9.0'\nstoreDir: /old/store\n").unwrap();
+        std::fs::write(
+            nm.join(".modules.yaml"),
+            "lockfileVersion: '9.0'\nstoreDir: /old/store\n",
+        )
+        .unwrap();
 
         let profile = clone_with_root(&root, "web", None).unwrap();
         let dst_nm = root.join(&profile.id).join("node_modules");
         assert!(dst_nm.is_dir(), "node_modules should be copied");
-        assert!(!dst_nm.join(".modules.yaml").exists(), "carried .modules.yaml must be purged");
+        assert!(
+            !dst_nm.join(".modules.yaml").exists(),
+            "carried .modules.yaml must be purged"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

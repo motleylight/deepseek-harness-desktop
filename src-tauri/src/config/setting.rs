@@ -1,8 +1,26 @@
 use super::constants::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Runtime};
 use tauri_plugin_store::StoreExt;
+
+/// 桌面端自行启动并管理的本地 Harness 连接 id。
+pub const MANAGED_CONNECTION_ID: &str = "managed-local";
+
+/// 用户保存的外部 Harness 入口。
+///
+/// 外部连接只决定嵌入页面与可达性探测，不授予桌面端进程管理或原生桥接权限。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DshConnection {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub url: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,6 +92,15 @@ pub struct Setting {
     /// 备份是否包含凭据文件（`.credentials.yaml`）。
     #[serde(default)]
     pub backup_include_credentials: bool,
+    /// 用户保存的外部 Harness 连接。缺失时保持空列表，兼容既有 store。
+    #[serde(default)]
+    pub connections: Vec<DshConnection>,
+    /// 当前显示的连接；内置托管实例恒为 `managed-local`。
+    #[serde(default = "default_active_connection_id")]
+    pub active_connection_id: String,
+    /// 外部连接 id 的本地递增序号，避免把地址或凭据用作持久化 id。
+    #[serde(default = "default_next_connection_id")]
+    pub next_connection_id: u32,
 }
 
 pub const ZOOM_FACTOR_MIN: f64 = 0.5;
@@ -83,6 +110,16 @@ pub const ZOOM_FACTOR_STEP: f64 = 0.1;
 /// 默认档案：桌面端内置的 web 档案
 fn default_active_profile() -> String {
     "web".to_string()
+}
+
+/// 默认显示桌面端托管的本地 Harness。
+fn default_active_connection_id() -> String {
+    MANAGED_CONNECTION_ID.to_string()
+}
+
+/// 首个外部连接的递增序号。
+fn default_next_connection_id() -> u32 {
+    1
 }
 
 /// 命令行集成默认开启（开发者工具场景，安装完成即可用）
@@ -149,6 +186,81 @@ pub fn normalize_backup_settings(interval_days: u32, retention_count: u32) -> (u
     (interval, retention)
 }
 
+/// 归一化用户填写的 Harness HTTP(S) 地址。
+///
+/// 未填写协议时按 HTTP 处理，便于直接输入 `127.0.0.1:3080`。允许反向代理使用的
+/// 路径，但不接受嵌入式凭据、查询参数或片段；前两类常含凭据，片段不会参与服务请求
+/// 且会让嵌入页与探测目标不一致。
+pub fn normalize_dsh_connection_url(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    let value = if value.contains("://") {
+        value.to_string()
+    } else {
+        format!("http://{value}")
+    };
+    let parsed = reqwest::Url::parse(&value)
+        .map_err(|_| "CONNECTION_URL_INVALID: enter a valid HTTP(S) URL".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(
+            "CONNECTION_URL_INVALID: enter an HTTP(S) address without credentials, query parameters, or a fragment"
+                .to_string(),
+        );
+    }
+    Ok(parsed.to_string())
+}
+
+/// 归一化外部连接名称，避免空白或超长标签挤占常驻导航栏。
+fn normalize_dsh_connection_name(value: &str) -> Result<String, String> {
+    let name = value.trim();
+    if name.is_empty() || name.chars().count() > 80 {
+        return Err(
+            "CONNECTION_NAME_INVALID: enter a name between 1 and 80 characters".to_string(),
+        );
+    }
+    Ok(name.to_string())
+}
+
+/// 清除损坏、重复或过期的连接记录，并将活动项回落到托管实例。
+fn normalize_connections(setting: &mut Setting) {
+    let mut seen_ids = HashSet::new();
+    let mut seen_urls = HashSet::new();
+    setting.connections.retain_mut(|connection| {
+        let Ok(url) = normalize_dsh_connection_url(&connection.url) else {
+            return false;
+        };
+        let Ok(name) = normalize_dsh_connection_name(&connection.name) else {
+            return false;
+        };
+        if connection.id.is_empty()
+            || connection.id == MANAGED_CONNECTION_ID
+            || !seen_ids.insert(connection.id.clone())
+            || !seen_urls.insert(url.clone())
+        {
+            return false;
+        }
+        connection.url = url;
+        connection.name = name;
+        true
+    });
+    if setting.active_connection_id != MANAGED_CONNECTION_ID
+        && !setting
+            .connections
+            .iter()
+            .any(|connection| connection.id == setting.active_connection_id)
+    {
+        setting.active_connection_id = default_active_connection_id();
+    }
+    if setting.next_connection_id == 0 {
+        setting.next_connection_id = default_next_connection_id();
+    }
+}
+
 /// 把 Setting 的备份字段归一化到有效范围。
 fn normalize_backup_fields(setting: &mut Setting) {
     let (interval, retention) = normalize_backup_settings(
@@ -192,6 +304,9 @@ impl Default for Setting {
             auto_backup_on_change: false,
             backup_retention_count: default_backup_retention_count(),
             backup_include_credentials: false,
+            connections: Vec::new(),
+            active_connection_id: default_active_connection_id(),
+            next_connection_id: default_next_connection_id(),
         }
     }
 }
@@ -231,6 +346,7 @@ fn read_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
     setting.zoom_factor = normalize_zoom_factor(setting.zoom_factor);
     setting.close_action = normalize_close_action(&setting.close_action);
     normalize_backup_fields(&mut setting);
+    normalize_connections(&mut setting);
     setting
 }
 
@@ -253,6 +369,9 @@ fn emit_setting(app_handle: &AppHandle, value: &serde_json::Value) {
 fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Setting {
     replacement.zoom_factor = normalize_zoom_factor(current.zoom_factor);
     replacement.close_action = normalize_close_action(&current.close_action);
+    replacement.connections = current.connections.clone();
+    replacement.active_connection_id = current.active_connection_id.clone();
+    replacement.next_connection_id = current.next_connection_id;
     replacement
 }
 
@@ -266,6 +385,7 @@ pub fn set_store_dat_setting(app_handle: &AppHandle, mut setting: Setting) {
         let current = read_store_dat_setting(app_handle);
         setting = preserve_persisted_fields(setting, &current);
         normalize_backup_fields(&mut setting);
+        normalize_connections(&mut setting);
         write_store_dat_setting(app_handle, &setting)
     };
     emit_setting(app_handle, &value);
@@ -286,6 +406,7 @@ where
         // 落盘前的第二道闸：调用方（含前端 invoke）写入的不可信取值不以原始形态进 store
         setting.close_action = normalize_close_action(&setting.close_action);
         normalize_backup_fields(&mut setting);
+        normalize_connections(&mut setting);
         let value = write_store_dat_setting(app_handle, &setting);
         (setting, value)
     };
@@ -306,6 +427,118 @@ pub fn get_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     read_store_dat_setting(app_handle)
+}
+
+/// 添加一个外部 Harness 连接并返回更新后的设置。
+pub fn add_dsh_connection(
+    app_handle: &AppHandle,
+    name: String,
+    url: String,
+) -> Result<Setting, String> {
+    let name = normalize_dsh_connection_name(&name)?;
+    let url = normalize_dsh_connection_url(&url)?;
+    let existing = get_store_dat_setting(app_handle);
+    if existing
+        .connections
+        .iter()
+        .any(|connection| connection.url == url)
+    {
+        return Err("CONNECTION_URL_DUPLICATE: this address is already saved".to_string());
+    }
+    Ok(update_store_dat_setting(app_handle, |setting| {
+        let mut next = setting.next_connection_id;
+        let id = loop {
+            let id = format!("external-{next}");
+            next = next.saturating_add(1).max(1);
+            if !setting
+                .connections
+                .iter()
+                .any(|connection| connection.id == id)
+            {
+                break id;
+            }
+        };
+        setting.next_connection_id = next;
+        setting.connections.push(DshConnection { id, name, url });
+    }))
+}
+
+/// 更新一个已保存的外部 Harness 连接并返回更新后的设置。
+pub fn update_dsh_connection(
+    app_handle: &AppHandle,
+    id: String,
+    name: String,
+    url: String,
+) -> Result<Setting, String> {
+    let name = normalize_dsh_connection_name(&name)?;
+    let url = normalize_dsh_connection_url(&url)?;
+    let existing = get_store_dat_setting(app_handle);
+    if !existing
+        .connections
+        .iter()
+        .any(|connection| connection.id == id)
+    {
+        return Err("CONNECTION_NOT_FOUND: the selected connection no longer exists".to_string());
+    }
+    if existing
+        .connections
+        .iter()
+        .any(|connection| connection.id != id && connection.url == url)
+    {
+        return Err("CONNECTION_URL_DUPLICATE: this address is already saved".to_string());
+    }
+    let updated = update_store_dat_setting(app_handle, |setting| {
+        if let Some(connection) = setting
+            .connections
+            .iter_mut()
+            .find(|connection| connection.id == id)
+        {
+            connection.name = name;
+            connection.url = url;
+        }
+    });
+    if !updated
+        .connections
+        .iter()
+        .any(|connection| connection.id == id)
+    {
+        return Err("CONNECTION_NOT_FOUND: the selected connection no longer exists".to_string());
+    }
+    Ok(updated)
+}
+
+/// 切换当前显示的 Harness 连接；仅接受内置托管实例或已保存的外部连接。
+pub fn select_dsh_connection(app_handle: &AppHandle, id: String) -> Result<Setting, String> {
+    let existing = get_store_dat_setting(app_handle);
+    if id != MANAGED_CONNECTION_ID
+        && !existing
+            .connections
+            .iter()
+            .any(|connection| connection.id == id)
+    {
+        return Err("CONNECTION_NOT_FOUND: the selected connection no longer exists".to_string());
+    }
+    Ok(update_store_dat_setting(app_handle, |setting| {
+        setting.active_connection_id = id;
+    }))
+}
+
+/// 删除外部连接；正在显示的条目删除后回退到托管实例。
+pub fn remove_dsh_connection(app_handle: &AppHandle, id: String) -> Result<Setting, String> {
+    let existing = get_store_dat_setting(app_handle);
+    if !existing
+        .connections
+        .iter()
+        .any(|connection| connection.id == id)
+    {
+        return Err("CONNECTION_NOT_FOUND: the selected connection no longer exists".to_string());
+    }
+    Ok(update_store_dat_setting(app_handle, |setting| {
+        setting.connections.retain(|connection| connection.id != id);
+        if setting.active_connection_id == id {
+            setting.active_connection_id = default_active_connection_id();
+        }
+    }))
 }
 
 /// 已安装 Harness 发行版对应的 GitHub release commit hash
@@ -335,8 +568,9 @@ pub fn set_dsh_pkg_tag(app_handle: &AppHandle, tag: String) {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_close_action, default_zoom_factor, normalize_close_action, normalize_zoom_factor,
-        preserve_persisted_fields, Setting, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
+        default_close_action, default_zoom_factor, normalize_close_action,
+        normalize_dsh_connection_url, normalize_zoom_factor, preserve_persisted_fields,
+        DshConnection, Setting, MANAGED_CONNECTION_ID, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
     };
 
     #[test]
@@ -462,5 +696,63 @@ mod tests {
             "quit",
             "写入 store 再读回后关闭行为应保持不变"
         );
+    }
+
+    #[test]
+    fn connection_url_accepts_http_and_https_addresses() {
+        assert_eq!(
+            normalize_dsh_connection_url("https://dsh.example.com:8443").unwrap(),
+            "https://dsh.example.com:8443/"
+        );
+        assert_eq!(
+            normalize_dsh_connection_url("http://127.0.0.1:3081/").unwrap(),
+            "http://127.0.0.1:3081/"
+        );
+        assert_eq!(
+            normalize_dsh_connection_url("127.0.0.1:3081").unwrap(),
+            "http://127.0.0.1:3081/"
+        );
+        assert_eq!(
+            normalize_dsh_connection_url("https://dsh.example.com/harness").unwrap(),
+            "https://dsh.example.com/harness"
+        );
+    }
+
+    #[test]
+    fn connection_url_rejects_non_http_addresses_and_credentials() {
+        for invalid in [
+            "file:///C:/dsh",
+            "https://user:token@dsh.example.com",
+            "https://dsh.example.com/?token=secret",
+            "https://dsh.example.com/#section",
+            "not a URL",
+        ] {
+            assert!(
+                normalize_dsh_connection_url(invalid).is_err(),
+                "{invalid} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn persisted_connection_fields_survive_legacy_full_setting_write() {
+        let mut stale = Setting::default();
+        stale.connections = Vec::new();
+        stale.active_connection_id = MANAGED_CONNECTION_ID.to_string();
+
+        let mut current = Setting::default();
+        current.connections = vec![DshConnection {
+            id: "external-1".to_string(),
+            name: "Development".to_string(),
+            url: "http://127.0.0.1:3081/".to_string(),
+        }];
+        current.active_connection_id = "external-1".to_string();
+        current.next_connection_id = 2;
+
+        let merged = preserve_persisted_fields(stale, &current);
+
+        assert_eq!(merged.connections.len(), 1);
+        assert_eq!(merged.active_connection_id, "external-1");
+        assert_eq!(merged.next_connection_id, 2);
     }
 }
