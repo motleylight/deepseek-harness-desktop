@@ -3,6 +3,7 @@ import type { ConnectionStatus, DesktopConnectionHost, DshConnection } from './t
 import { createContext, use } from 'react'
 
 export interface ConnectionRuntime extends DesktopConnectionHost {
+  mutateConnection: (command: string, args: Record<string, unknown>) => Promise<void>
   editConnection: (target: ConnectionEditorTarget) => void
   deleteConnection: (connection: DshConnection) => void
   available: boolean

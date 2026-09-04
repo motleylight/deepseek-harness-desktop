@@ -2,7 +2,7 @@ import { isDesktopMessage } from './desktop-message.js'
 import { mountExternalWorkspace } from './external-workspace.js'
 
 /** A plugin-provided session opener supersedes the dormant DOM-only Desktop companion. */
-export function installExternalAdapter(openById) {
+export function installExternalAdapter(openById, stores) {
   if (window === window.top || new URL(location.href).searchParams.get('dsh-desktop-external') !== '1')
     return () => {}
   if (window.__dshConnectionsAdapter && !openById)
@@ -13,7 +13,7 @@ export function installExternalAdapter(openById) {
     if (!isDesktopMessage(event) || event.data?.source !== 'dsh-desktop')
       return
     if (event.data.type === 'dsh://external-workspace:refresh' && !stop)
-      stop = mountExternalWorkspace(openById, event.origin)
+      stop = mountExternalWorkspace(openById, event.origin, stores)
   }
   function dispose() {
     stop?.()

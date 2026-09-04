@@ -1,0 +1,14 @@
+{
+  "name": "dsh-tauri-ssh",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Linux DSH deployment, core and plugin management over system OpenSSH.",
+  "license": "MIT",
+  "exports": { ".": "./src/index.js", "./desktop": "./desktop/index.ts" },
+  "files": ["README.en.md", "README.md", "cordis.patch.yml", "desktop", "dist", "locales", "src"],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "scripts": { "build": "node build.mjs" },
+  "peerDependencies": { "@deepseek-ai/cordis": "*" },
+  "peerDependenciesMeta": { "@deepseek-ai/cordis": { "optional": true } },
+  "dependencies": { "extract-zip": "2.0.1", "http-proxy": "1.18.1" }
+}

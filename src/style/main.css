@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @source "../../plugins/dsh-tauri-connections/desktop";
+@source "../../plugins/dsh-tauri-ssh/desktop";
 
 @config "../../tailwind.config.js";
 @import "@heroui/styles"; 

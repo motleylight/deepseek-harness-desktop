@@ -45,6 +45,7 @@
 
 - 🧩 **插件管理** — 插件面板管理已安装插件，出现异常时提供升级 / 卸载入口，错误详情。
 - 🔗 **DSH 多连接插件** — [dsh-tauri-connections](plugins/dsh-tauri-connections/README.md) 提供并行连接、工作区分组和「配置 → 应用」中的统一管理。外部 DSH 的服务进程与数据由其自身管理。
+- 🐧 **DSH SSH 插件** — [dsh-tauri-ssh](plugins/dsh-tauri-ssh/README.md) 随包提供 Linux x64 远端安装、SSH 隧道、独立底层升级与插件管理；使用系统 SSH 密钥，每台机器管理一个 DSH。断开连接不停止远端服务。
 - 🎁 **内置插件** — 随安装包内置插件，以及将来引入更多高质量的内置插件。
 - 🪶 **原生轻量** — Tauri 2 外壳（非 Electron）：更小的安装包、更低的内存占用、原生窗口。
 - ⌨️ **命令行集成** — 安装自动注册 `dsh` 命令，新开终端即用；不覆盖你已有 shell 配置。

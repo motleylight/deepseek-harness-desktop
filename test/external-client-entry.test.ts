@@ -59,6 +59,16 @@ it('does not intercept an already booted page', () => {
   expect(page.__ModuleLoader__).toBe(loader)
 })
 
+it('uses current controller contributions when the remote has no legacy client runtime', () => {
+  const loader = facade()
+  loader.system.manifest.plugins.push({ id: '@deepseek-ai/dsh-api-workspace-controller' })
+  page.__ModuleLoader__ = loader
+  dispose = installExternalClientEntry()
+  loader.create()
+  expect(loader.system.manifest.plugins.at(-1)).toMatchObject({ inject: ['@deepseek-ai/dsh-api-session-controller', '@deepseek-ai/dsh-api-workspace-controller'] })
+  expect(loader.load.mock.calls[0][0].factory().inject).toEqual(['sessions', 'workspaces'])
+})
+
 it('restores the original facade on page teardown before boot', () => {
   dispose = installExternalClientEntry()
   const loader = facade()

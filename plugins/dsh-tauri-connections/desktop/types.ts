@@ -3,6 +3,16 @@ export interface DshConnection {
   id: string
   name: string
   url: string
+  displayUrl?: string
+  transport?: 'ssh'
+  enabled?: boolean
+}
+
+export interface ConnectionExtension {
+  mutate: (command: string, args: Record<string, unknown>) => Promise<void>
+  edit: (connection: DshConnection, renameOnly: boolean) => void
+  addAction?: import('react').ReactNode
+  renderActions?: (connection: DshConnection) => import('react').ReactNode
 }
 
 /** Persisted connection fields shared with Desktop's configuration store. */
@@ -21,6 +31,7 @@ export interface ConnectionStatus {
 }
 
 export interface DesktopConnectionHost {
+  extension?: ConnectionExtension
   config: ConnectionsConfig | undefined
   updateConfig: (config: ConnectionsConfig) => void
   translate: (key: string, values?: Record<string, unknown>) => string

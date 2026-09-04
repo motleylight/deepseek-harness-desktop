@@ -114,6 +114,36 @@ describe('connection plugin lifecycle and workspace routing', () => {
 })
 
 describe('external DSH companion', () => {
+  it('projects current DSH stores, excludes archived sessions and disposes subscriptions', () => {
+    const sessions = { phase: 'ready', ids: ['live', 'archived'], byId: { live: { displayTitle: 'Live title' }, archived: { displayTitle: 'Archived title' } } }
+    const workspaces = { phase: 'pending', items: [{ workspaceId: 'w', title: 'Linux', sessionIds: ['live', 'archived'] }], archivedSessionIds: ['archived'] }
+    const subscriptions: Array<() => void> = []
+    const stops = [vi.fn(), vi.fn()]
+    const stores = {
+      sessions: { getSnapshot: () => sessions, subscribe: (listener: () => void) => {
+        subscriptions.push(listener)
+        return stops[0]
+      } },
+      workspaces: { getSnapshot: () => workspaces, subscribe: (listener: () => void) => {
+        subscriptions.push(listener)
+        return stops[1]
+      } },
+    }
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const open = vi.fn()
+    dispose = mountExternalWorkspace(open, 'http://tauri.localhost', stores)
+    expect(host.postMessage).not.toHaveBeenCalled()
+    workspaces.phase = 'ready'
+    subscriptions[0]()
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ tree: { workspaces: [{ id: 'w', title: 'Linux', sessions: [{ id: 'live', title: 'Live title' }] }] } }), 'http://tauri.localhost')
+    expect(fetch).not.toHaveBeenCalled()
+    send({ source: 'dsh-desktop', type: 'dsh://external-workspace:open-session', sessionId: 'live', sessionTitle: 'Live title' })
+    expect(open).toHaveBeenCalledWith('live')
+    dispose()
+    stops.forEach(stop => expect(stop).toHaveBeenCalledOnce())
+  })
+
   it('does not expose workspace data to an arbitrary embedding website', () => {
     window.location.href = 'http://127.0.0.1:3182/?dsh-desktop-external=1'
     const fetch = vi.fn()

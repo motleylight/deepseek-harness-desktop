@@ -155,7 +155,8 @@ function ExternalDshWorkspace({
   useEffect(() => {
     let disposed = false
     statusChangeRef.current(connection.id, { state: 'checking' })
-    void invoke<string>('probe_dsh_connection', { url: connection.url })
+    const probe = connection.transport === 'ssh' ? Promise.resolve(connection.url) : invoke<string>('probe_dsh_connection', { url: connection.url })
+    void probe
       .then(() => {
         if (disposed)
           return
@@ -175,7 +176,7 @@ function ExternalDshWorkspace({
       frameChangeRef.current(connection.id, null)
       statusChangeRef.current(connection.id, null)
     }
-  }, [connection.id, connection.url, probeVersion])
+  }, [connection.id, connection.url, connection.transport, probeVersion])
 
   return (
     <div
@@ -219,7 +220,7 @@ function ExternalDshWorkspace({
 
 /** 并列挂载本地与已连接外部 DSH；工作区树由本地 DSH 的现有侧栏承载。 */
 export function DshWorkspaces({
-  config,
+  config: suppliedConfig,
   selectedConnectionId,
   onSelectConnection,
   managedIframeRef,
@@ -232,7 +233,8 @@ export function DshWorkspaces({
   onManagedIframeError,
   onManagedRetry,
 }: DshWorkspacesProps) {
-  const { t, updateConfig, copyText, available, setAvailable, setStatus, editConnection, deleteConnection } = useConnectionHost()
+  const { config: hostConfig, t, mutateConnection, copyText, available, setAvailable, setStatus, editConnection, deleteConnection } = useConnectionHost()
+  const config = hostConfig ?? suppliedConfig
   const externalFramesRef = useRef<Record<string, HTMLIFrameElement | null>>({})
   const lastResponseRef = useRef<Record<string, number>>({})
   const [externalTrees, setExternalTrees] = useState<Record<string, WorkspaceTree>>({})
@@ -241,6 +243,8 @@ export function DshWorkspaces({
     config.connected_connection_ids.includes(connection.id)
   )) ?? []
   const managedName = config?.managed_connection_name || t('connections.managed_label')
+  const refreshStateRef = useRef({ connectedConnections, setStatus, t })
+  refreshStateRef.current = { connectedConnections, setStatus, t }
 
   function setExternalFrame(id: string, frame: HTMLIFrameElement | null) {
     if (frame && externalFramesRef.current[id] !== frame)
@@ -274,7 +278,7 @@ export function DshWorkspaces({
         connections: connectedConnections.map(connection => ({
           id: connection.id,
           name: connection.name,
-          url: connection.url,
+          url: connection.displayUrl || connection.url,
         })),
         selectedConnectionId,
         trees: externalTrees,
@@ -349,17 +353,16 @@ export function DshWorkspaces({
           editConnection({ kind: action === 'request-rename' ? 'rename' : 'edit', connection: target })
       }
       else if (action === 'copy') {
-        const url = connectionId === MANAGED_CONNECTION_ID ? managedServiceUrl : connection?.url
+        const url = connectionId === MANAGED_CONNECTION_ID ? managedServiceUrl : connection?.displayUrl || connection?.url
         if (!url)
           throw new Error('CONNECTION_NOT_FOUND')
         await copyText(url)
       }
       else if (action === 'disconnect' && connection) {
-        const updatedConfig = await invoke<ConnectionsConfig>('set_dsh_connection_connected', {
+        await mutateConnection('set_dsh_connection_connected', {
           id: connection.id,
           connected: false,
         })
-        updateConfig(updatedConfig)
       }
       else {
         throw new Error('CONNECTION_ACTION_INVALID')
@@ -435,11 +438,9 @@ export function DshWorkspaces({
   }, [managedIframeKey, managedIframeSrc, managedIframeRef, setAvailable])
 
   useEffect(() => {
-    const connections = (config?.connections ?? []).filter(connection => (
-      config?.connected_connection_ids.includes(connection.id)
-    ))
     const timer = window.setInterval(() => {
-      connections.forEach((connection) => {
+      const { connectedConnections, setStatus, t } = refreshStateRef.current
+      connectedConnections.forEach((connection) => {
         const frame = externalFramesRef.current[connection.id]
         const origin = externalOrigin(connection.url)
         if (!frame?.contentWindow || !origin)
@@ -453,7 +454,7 @@ export function DshWorkspaces({
       })
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [config, setStatus, t])
+  }, [])
 
   function handleManagedIframeLoad() {
     onManagedIframeLoad()

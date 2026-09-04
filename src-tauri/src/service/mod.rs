@@ -8,5 +8,6 @@ pub(crate) mod patch;
 pub mod plugin;
 pub mod profile;
 pub mod scheduler;
+pub mod ssh_host;
 pub mod update;
 pub mod workflow;

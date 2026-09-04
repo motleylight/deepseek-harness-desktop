@@ -1,5 +1,5 @@
 /** Unprivileged companion for an external frame; all RPC requests stay on its origin. */
-export function mountExternalWorkspace(openById, parentOrigin) {
+export function mountExternalWorkspace(openById, parentOrigin, stores) {
   let disposed = false
   let inFlight = false
   const abort = new AbortController()
@@ -7,6 +7,7 @@ export function mountExternalWorkspace(openById, parentOrigin) {
   const HOST_SOURCE = 'dsh-desktop'
   const BRIDGE_SOURCE = 'dsh-desktop-external-workspace'
   let observation = null
+  const subscriptions = []
 
   function post(message) {
     if (disposed)
@@ -75,7 +76,20 @@ export function mountExternalWorkspace(openById, parentOrigin) {
       return
     inFlight = true
     try {
-      const values = await Promise.all([rpc('workspace.list'), rpc('session.list')])
+      let values
+      if (stores) {
+        const workspace = stores.workspaces.getSnapshot()
+        const sessions = stores.sessions.getSnapshot()
+        if (workspace.error)
+          throw new Error(workspace.error.message || 'DSH_WORKSPACES_UNAVAILABLE')
+        if (workspace.phase !== 'ready' || sessions.phase !== 'ready')
+          return
+        const archived = new Set(workspace.archivedSessionIds)
+        values = [workspace, { items: sessions.ids.filter(id => !archived.has(id)).map(id => ({ sessionId: id, cwd: sessions.byId[id].cwd, projections: { values: { title: sessions.byId[id].displayTitle } } })) }]
+      }
+      else {
+        values = await Promise.all([rpc('workspace.list'), rpc('session.list')])
+      }
       const workspaceList = values[0]
       const sessionList = values[1]
       const sessions = Array.isArray(sessionList.items) ? sessionList.items : []
@@ -187,6 +201,7 @@ export function mountExternalWorkspace(openById, parentOrigin) {
       return
     disposed = true
     abort.abort()
+    subscriptions.forEach(unsubscribe => unsubscribe())
     observation.disconnect()
     window.removeEventListener('message', onMessage)
     window.removeEventListener('pagehide', dispose)
@@ -197,6 +212,14 @@ export function mountExternalWorkspace(openById, parentOrigin) {
     })
   }
   window.addEventListener('pagehide', dispose)
+  if (stores) {
+    subscriptions.push(stores.workspaces.subscribe(() => {
+      void sendTree()
+    }))
+    subscriptions.push(stores.sessions.subscribe(() => {
+      void sendTree()
+    }))
+  }
   hideSidebar()
   void sendTree()
   return dispose

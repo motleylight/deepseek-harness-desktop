@@ -535,6 +535,7 @@ mod security_tests {
 // configure invoke handler
 pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        crate::bridge::dsh_ssh_request,
         crate::bridge::install_dependencies,
         crate::bridge::check_dsh_update,
         crate::bridge::launch_harness,

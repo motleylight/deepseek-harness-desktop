@@ -3,6 +3,7 @@ import { Cpu, LogoWindows, PersonPencil, Puzzle } from '@gravity-ui/icons'
 import { useEventBus } from '@hairy/react-lib'
 import { cn, Modal } from '@heroui/react'
 import { useDisclosure } from '@overlastic/react'
+import { SshManagement } from 'dsh-tauri-ssh/desktop'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Case, If, Switch } from 'react-if-lite'
@@ -82,10 +83,10 @@ export function ConfigDialog(props: ConfigDialogProps) {
                     <ConfigProfile />
                   </Case>
                   <Case cond="plugins">
-                    <ConfigPlugin />
+                    <SshManagement kind="plugins"><ConfigPlugin /></SshManagement>
                   </Case>
                   <Case cond="harness">
-                    <ConfigCore />
+                    <SshManagement kind="core"><ConfigCore /></SshManagement>
                   </Case>
                 </Switch>
               </div>

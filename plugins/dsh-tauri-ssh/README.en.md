@@ -1,0 +1,17 @@
+# DSH SSH management
+
+A DSH plugin bundled with Desktop. The `desktop` entry supplies settings UI; `SshManager` supplies both the Cordis service and the Desktop stdio worker. Rust owns the worker process and relays messages.
+
+Add a Linux host or SSH Host alias under Settings → Application → DSH connections. Empty username and SSH port inherit system SSH configuration. Authentication uses system OpenSSH, default keys, ssh-agent, ProxyJump and known_hosts. No private-key contents or passwords are stored. Complete host-key confirmation and key unlocking in a terminal first; the connection must support `ssh -o BatchMode=yes`. Host-key verification is never bypassed.
+
+One DSH is managed per remote machine under the login user. Its HTTP listener is `127.0.0.1:3080`; Desktop connects through a loopback-only SSH tunnel. The SSH server must permit local forwarding. No remote service port other than SSH needs to be exposed. Multiple hosts appear in the existing workspace tree. Saved SSH targets and allocated local tunnel ports are separate. An occupied tunnel port produces an error without taking over the other process.
+
+Remote core versions live in `~/.local/share/dsh-desktop/versions`, and data in `~/.dsh`. The release source is the same `dsh-tauri-desk/deepseek-harness-pkg` used by Desktop, with the GitHub SHA-256 checked before the bundled extractor runs. Its current Linux artifact targets x64, not ARM. Inspection does not write remote files. Installation requires access to GitHub and npm; bootstrapping compatible Node/npm also requires curl, tar, xz, sha256sum and nodejs.org access. No sudo or global Node/DSH modifications are used. Existing data or DSH requires explicit adoption; users must stop an existing running DSH first. Adoption preserves existing data under the managed backups directory.
+
+For authenticated DSH versions, SSH reads the launch token from the plugin-owned service log and exchanges it for a browser credential. The credential stays in the local proxy's memory, never in saved connections or the embedded page. HTTP and WebSocket forwarding use the remote loopback authority without disabling DSH authentication. A temporary random token admits the Desktop page; the proxy rejects other webpage origins and non-loopback Host headers. Reconnect rotates the token, and health checks trigger fresh authentication after a service restart.
+
+Settings → Core and Plugins select the management target. Upgrade stages the target version, stops DSH, snapshots data, and starts the new version. Installation and plugin commands can run third-party package scripts; trust their sources. Explicit restore reinstates the snapshot and preserves post-upgrade data separately. A remote lock serializes mutations across desktops. Inspect after SSH interruption because a dropped connection does not imply rollback.
+
+Disconnecting, removing a connection, or exiting Desktop closes local SSH children only. Remote DSH, plugins and sessions remain. Only Stop terminates the service process group after checking recorded process identity. DSH detaches from the SSH session. This version does not configure boot startup; reboot or system login-session cleanup policy can still stop it. Reconnecting starts an already managed DSH.
+
+Build with `pnpm --filter dsh-tauri-ssh build`, then run plugin tests with `node --test plugins/dsh-tauri-ssh/test/*.node-test.mjs`. Real SSH acceptance requires an isolated Linux account/data directory, never a production host.

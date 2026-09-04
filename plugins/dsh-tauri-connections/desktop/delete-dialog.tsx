@@ -1,13 +1,12 @@
-import type { ConnectionsConfig, DshConnection } from './types'
+import type { DshConnection } from './types'
 import { Button, Description, Label, Modal } from '@heroui/react'
-import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
 import { If } from 'react-if-lite'
 import { useConnectionHost } from './host'
 
 /** Deletes only the saved Desktop connection after confirmation. */
 export function ConnectionDeleteDialog({ connection, onClose }: { connection: DshConnection, onClose: () => void }) {
-  const { t, updateConfig } = useConnectionHost()
+  const { t, mutateConnection } = useConnectionHost()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   async function remove() {
@@ -15,7 +14,7 @@ export function ConnectionDeleteDialog({ connection, onClose }: { connection: Ds
       return
     setBusy(true)
     try {
-      updateConfig(await invoke<ConnectionsConfig>('remove_dsh_connection', { id: connection.id }))
+      await mutateConnection('remove_dsh_connection', { id: connection.id })
       onClose()
     }
     catch {

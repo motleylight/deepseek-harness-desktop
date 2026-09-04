@@ -1,5 +1,13 @@
 [
   {
+    "id": "dsh-tauri-ssh",
+    "spec": "workspace:plugins/dsh-tauri-ssh",
+    "package": "dsh-tauri-ssh",
+    "name": "DSH SSH",
+    "description": "Linux DSH management over system SSH",
+    "repoUrl": "https://github.com/motleylight/deepseek-harness-desktop"
+  },
+  {
     "id": "dsh-tauri-connections",
     "spec": "workspace:plugins/dsh-tauri-connections",
     "package": "dsh-tauri-connections",

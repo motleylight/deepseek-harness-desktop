@@ -13,6 +13,7 @@ pub mod lifecycle;
 pub mod plugin;
 pub mod profile;
 pub mod system_os;
+pub mod ssh;
 pub mod updater;
 
 pub use backup::*;
@@ -23,4 +24,5 @@ pub use lifecycle::*;
 pub use plugin::*;
 pub use profile::*;
 pub use system_os::*;
+pub use ssh::*;
 pub use updater::*;

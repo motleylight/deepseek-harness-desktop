@@ -1,7 +1,6 @@
-import type { ConnectionsConfig, DshConnection } from './types'
+import type { DshConnection } from './types'
 import { Ellipsis, Plus } from '@gravity-ui/icons'
 import { Button, Chip, Description, Dropdown, Label, Switch } from '@heroui/react'
-import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
 import { If } from 'react-if-lite'
 import { useConnectionHost } from './host'
@@ -9,7 +8,7 @@ import { useConnectionHost } from './host'
 /** One connection list owns both the state display and management actions in Application. */
 export function DshConnectionPanel() {
   const host = useConnectionHost()
-  const { config, t, statuses, available, updateConfig } = host
+  const { config, t, statuses, available, mutateConnection } = host
   const { editConnection: setEditor, deleteConnection: setDeleting } = host
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
@@ -23,7 +22,7 @@ export function DshConnectionPanel() {
     setBusy(connection.id)
     setError('')
     try {
-      updateConfig(await invoke<ConnectionsConfig>('set_dsh_connection_connected', { id: connection.id, connected }))
+      await mutateConnection('set_dsh_connection_connected', { id: connection.id, connected })
     }
     catch (reason) {
       console.error('[dsh-tauri-connections] connection selection failed:', reason)
@@ -34,7 +33,7 @@ export function DshConnectionPanel() {
 
   async function copy(connection: DshConnection) {
     try {
-      await host.copyText(connection.url)
+      await host.copyText(connection.displayUrl || connection.url)
       setNotice(t('connections.copied'))
     }
     catch { setError(t('connections.action_failed')) }
@@ -44,15 +43,18 @@ export function DshConnectionPanel() {
     <section className="space-y-3" aria-label={t('connections.title')}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-ink">{t('connections.title')}</span>
-        <Button size="sm" variant="tertiary" onPress={() => setEditor({ kind: 'add' })} isDisabled={busy !== null}>
-          <Plus />
-          {t('connections.add')}
-        </Button>
+        <div className="flex gap-2">
+          {host.extension?.addAction}
+          <Button size="sm" variant="tertiary" onPress={() => setEditor({ kind: 'add' })} isDisabled={busy !== null}>
+            <Plus />
+            {t('connections.add')}
+          </Button>
+        </div>
       </div>
       <Description>{t('connections.description')}</Description>
       {rows.map((connection) => {
         const isManaged = connection.id === 'managed-local'
-        const connected = isManaged || Boolean(config?.connected_connection_ids.includes(connection.id))
+        const connected = isManaged || (connection.transport === 'ssh' ? Boolean(connection.enabled) : Boolean(config?.connected_connection_ids.includes(connection.id)))
         const status = statuses[connection.id]
         const stateKey = isManaged
           ? (host.serviceRunning ? 'connections.running' : 'connections.stopped')
@@ -66,7 +68,7 @@ export function DshConnectionPanel() {
                   <Label>{connection.name}</Label>
                   <Chip size="sm" variant="soft" color={color}>{t(stateKey)}</Chip>
                 </div>
-                <div className="mt-1 break-all font-mono text-xs text-muted">{connection.url}</div>
+                <div className="mt-1 break-all font-mono text-xs text-muted">{connection.displayUrl || connection.url}</div>
               </div>
               <Dropdown>
                 <Button isIconOnly size="sm" variant="ghost" aria-label={`${connection.name} ${t('connections.manage')}`} isDisabled={busy !== null}><Ellipsis /></Button>
@@ -93,6 +95,7 @@ export function DshConnectionPanel() {
               </div>
             </If>
             <If cond={!isManaged}>
+              {host.extension?.renderActions?.(connection)}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Description>
                   {status?.state === 'connected' && connected

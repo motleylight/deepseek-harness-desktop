@@ -19,19 +19,20 @@ export function installExternalClientEntry() {
       const system = create.apply(loader, args)
       if (system.manifest.plugins.some(entry => entry.id === 'dsh-tauri-connections'))
         return system
+      const controllers = system.manifest.plugins.some(entry => entry.id === '@deepseek-ai/dsh-api-workspace-controller')
       loader.load({
         id: ENTRY_ID,
         factory() {
           return {
             name: ENTRY_ID,
-            inject: ['sessions'],
+            inject: controllers ? ['sessions', 'workspaces'] : ['sessions'],
             apply(ctx) {
-              ctx.effect(() => installExternalAdapter(id => ctx.sessions.open(id)))
+              ctx.effect(() => installExternalAdapter(id => ctx.sessions.open(id), controllers ? { sessions: ctx.sessions.list, workspaces: ctx.workspaces.list } : undefined))
             },
           }
         },
       })
-      system.manifest.plugins.push({ id: ENTRY_ID, inject: ['@deepseek-ai/dsh-client-runtime'], immediately: false })
+      system.manifest.plugins.push({ id: ENTRY_ID, inject: controllers ? ['@deepseek-ai/dsh-api-session-controller', '@deepseek-ai/dsh-api-workspace-controller'] : ['@deepseek-ai/dsh-client-runtime'], immediately: false })
       return system
     }
     loader.create = createWithCompanion
