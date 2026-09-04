@@ -95,7 +95,13 @@ pub struct Setting {
     /// 用户保存的外部 Harness 连接。缺失时保持空列表，兼容既有 store。
     #[serde(default)]
     pub connections: Vec<DshConnection>,
-    /// 当前显示的连接；内置托管实例恒为 `managed-local`。
+    /// 已连接并展示在 Desktop 工作区树中的外部 Harness id。
+    #[serde(default)]
+    pub connected_connection_ids: Vec<String>,
+    /// 标记多连接选择已从旧版单连接选择迁移完成。
+    #[serde(default)]
+    pub connection_selection_initialized: bool,
+    /// 当前可见的工作区；内置托管实例恒为 `managed-local`。
     #[serde(default = "default_active_connection_id")]
     pub active_connection_id: String,
     /// 外部连接 id 的本地递增序号，避免把地址或凭据用作持久化 id。
@@ -226,7 +232,7 @@ fn normalize_dsh_connection_name(value: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-/// 清除损坏、重复或过期的连接记录，并将活动项回落到托管实例。
+/// 清除损坏、重复或过期的连接记录，并归一化工作区的可见与连接选择。
 fn normalize_connections(setting: &mut Setting) {
     let mut seen_ids = HashSet::new();
     let mut seen_urls = HashSet::new();
@@ -248,11 +254,35 @@ fn normalize_connections(setting: &mut Setting) {
         connection.name = name;
         true
     });
+    if !setting.connection_selection_initialized {
+        if setting.active_connection_id != MANAGED_CONNECTION_ID
+            && setting
+                .connections
+                .iter()
+                .any(|connection| connection.id == setting.active_connection_id)
+        {
+            setting
+                .connected_connection_ids
+                .push(setting.active_connection_id.clone());
+        }
+        setting.connection_selection_initialized = true;
+    }
+
+    let valid_ids = setting
+        .connections
+        .iter()
+        .map(|connection| connection.id.as_str())
+        .collect::<HashSet<_>>();
+    let mut selected_ids = HashSet::new();
+    setting.connected_connection_ids.retain(|id| {
+        valid_ids.contains(id.as_str()) && selected_ids.insert(id.clone())
+    });
+
     if setting.active_connection_id != MANAGED_CONNECTION_ID
         && !setting
-            .connections
+            .connected_connection_ids
             .iter()
-            .any(|connection| connection.id == setting.active_connection_id)
+            .any(|id| id == &setting.active_connection_id)
     {
         setting.active_connection_id = default_active_connection_id();
     }
@@ -305,6 +335,8 @@ impl Default for Setting {
             backup_retention_count: default_backup_retention_count(),
             backup_include_credentials: false,
             connections: Vec::new(),
+            connected_connection_ids: Vec::new(),
+            connection_selection_initialized: true,
             active_connection_id: default_active_connection_id(),
             next_connection_id: default_next_connection_id(),
         }
@@ -370,6 +402,8 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.zoom_factor = normalize_zoom_factor(current.zoom_factor);
     replacement.close_action = normalize_close_action(&current.close_action);
     replacement.connections = current.connections.clone();
+    replacement.connected_connection_ids = current.connected_connection_ids.clone();
+    replacement.connection_selection_initialized = current.connection_selection_initialized;
     replacement.active_connection_id = current.active_connection_id.clone();
     replacement.next_connection_id = current.next_connection_id;
     replacement
@@ -459,7 +493,13 @@ pub fn add_dsh_connection(
             }
         };
         setting.next_connection_id = next;
-        setting.connections.push(DshConnection { id, name, url });
+        setting.connections.push(DshConnection {
+            id: id.clone(),
+            name,
+            url,
+        });
+        setting.connected_connection_ids.push(id.clone());
+        setting.active_connection_id = id;
     }))
 }
 
@@ -507,16 +547,44 @@ pub fn update_dsh_connection(
     Ok(updated)
 }
 
-/// 切换当前显示的 Harness 连接；仅接受内置托管实例或已保存的外部连接。
+/// 设置一个外部 Harness 是否作为并行工作区保持连接。
+pub fn set_dsh_connection_connected(
+    app_handle: &AppHandle,
+    id: String,
+    connected: bool,
+) -> Result<Setting, String> {
+    let existing = get_store_dat_setting(app_handle);
+    if !existing
+        .connections
+        .iter()
+        .any(|connection| connection.id == id)
+    {
+        return Err("CONNECTION_NOT_FOUND: the selected connection no longer exists".to_string());
+    }
+    Ok(update_store_dat_setting(app_handle, |setting| {
+        if connected {
+            if !setting.connected_connection_ids.iter().any(|item| item == &id) {
+                setting.connected_connection_ids.push(id);
+            }
+        } else {
+            setting.connected_connection_ids.retain(|item| item != &id);
+            if setting.active_connection_id == id {
+                setting.active_connection_id = default_active_connection_id();
+            }
+        }
+    }))
+}
+
+/// 选择当前可见的工作区；仅接受托管实例或已连接的外部 Harness。
 pub fn select_dsh_connection(app_handle: &AppHandle, id: String) -> Result<Setting, String> {
     let existing = get_store_dat_setting(app_handle);
     if id != MANAGED_CONNECTION_ID
         && !existing
-            .connections
+            .connected_connection_ids
             .iter()
-            .any(|connection| connection.id == id)
+            .any(|connection_id| connection_id == &id)
     {
-        return Err("CONNECTION_NOT_FOUND: the selected connection no longer exists".to_string());
+        return Err("CONNECTION_NOT_CONNECTED: the selected connection is not connected".to_string());
     }
     Ok(update_store_dat_setting(app_handle, |setting| {
         setting.active_connection_id = id;
@@ -535,6 +603,7 @@ pub fn remove_dsh_connection(app_handle: &AppHandle, id: String) -> Result<Setti
     }
     Ok(update_store_dat_setting(app_handle, |setting| {
         setting.connections.retain(|connection| connection.id != id);
+        setting.connected_connection_ids.retain(|connection_id| connection_id != &id);
         if setting.active_connection_id == id {
             setting.active_connection_id = default_active_connection_id();
         }
@@ -569,7 +638,8 @@ pub fn set_dsh_pkg_tag(app_handle: &AppHandle, tag: String) {
 mod tests {
     use super::{
         default_close_action, default_zoom_factor, normalize_close_action,
-        normalize_dsh_connection_url, normalize_zoom_factor, preserve_persisted_fields,
+        normalize_connections, normalize_dsh_connection_url, normalize_zoom_factor,
+        preserve_persisted_fields,
         DshConnection, Setting, MANAGED_CONNECTION_ID, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
     };
 
@@ -738,6 +808,7 @@ mod tests {
     fn persisted_connection_fields_survive_legacy_full_setting_write() {
         let mut stale = Setting::default();
         stale.connections = Vec::new();
+        stale.connected_connection_ids = Vec::new();
         stale.active_connection_id = MANAGED_CONNECTION_ID.to_string();
 
         let mut current = Setting::default();
@@ -747,12 +818,33 @@ mod tests {
             url: "http://127.0.0.1:3081/".to_string(),
         }];
         current.active_connection_id = "external-1".to_string();
+        current.connected_connection_ids = vec!["external-1".to_string()];
         current.next_connection_id = 2;
 
         let merged = preserve_persisted_fields(stale, &current);
 
         assert_eq!(merged.connections.len(), 1);
+        assert_eq!(merged.connected_connection_ids, ["external-1"]);
         assert_eq!(merged.active_connection_id, "external-1");
         assert_eq!(merged.next_connection_id, 2);
+    }
+
+    #[test]
+    fn legacy_active_connection_becomes_a_connected_workspace() {
+        let mut setting = Setting {
+            connections: vec![DshConnection {
+                id: "external-1".to_string(),
+                name: "Development".to_string(),
+                url: "http://127.0.0.1:3081/".to_string(),
+            }],
+            active_connection_id: "external-1".to_string(),
+            connection_selection_initialized: false,
+            ..Default::default()
+        };
+
+        normalize_connections(&mut setting);
+
+        assert_eq!(setting.connected_connection_ids, ["external-1"]);
+        assert!(setting.connection_selection_initialized);
     }
 }

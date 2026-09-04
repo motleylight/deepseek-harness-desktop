@@ -87,9 +87,7 @@ pub fn setup(app_handle: tauri::AppHandle) {
     let app_for_start = app_handle.clone();
     tauri::async_runtime::spawn(async move {
         let setting = crate::config::get_store_dat_setting(&app_for_start);
-        if !setting.auto_start
-            || setting.active_connection_id != crate::config::MANAGED_CONNECTION_ID
-        {
+        if !setting.auto_start {
             log::debug!("managed Harness auto_start skipped");
             return;
         }
@@ -576,6 +574,7 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
         crate::bridge::update_app_config,
         crate::bridge::add_dsh_connection,
         crate::bridge::update_dsh_connection,
+        crate::bridge::set_dsh_connection_connected,
         crate::bridge::select_dsh_connection,
         crate::bridge::remove_dsh_connection,
         crate::bridge::get_launch_on_login,

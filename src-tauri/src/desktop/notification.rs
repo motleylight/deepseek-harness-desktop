@@ -159,12 +159,18 @@ pub fn enable_notification_permissions(
     webview: tauri::webview::PlatformWebview,
     parent: tauri::WebviewWindow<tauri::Wry>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
     use rfd::{MessageButtons, MessageDialog, MessageDialogResult};
     use webview2_com::{
         ExecuteScriptCompletedHandler, FrameContentLoadingEventHandler, FrameCreatedEventHandler,
-        FramePermissionRequestedEventHandler,
+        FrameNavigationStartingEventHandler, FramePermissionRequestedEventHandler,
         Microsoft::Web::WebView2::Win32::{
-            ICoreWebView2Frame3, ICoreWebView2Profile4, ICoreWebView2_13, ICoreWebView2_4,
+            ICoreWebView2Frame2, ICoreWebView2Frame3,
+            ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2Profile4, ICoreWebView2_13,
+            ICoreWebView2_4,
             COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_AUTOPLAY,
             COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
             COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE, COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
@@ -178,7 +184,8 @@ pub fn enable_notification_permissions(
         },
         PermissionRequestedEventHandler, SetPermissionStateCompletedHandler,
     };
-    use windows_core::{Interface, HSTRING};
+    use windows_core::{Interface, HSTRING, PWSTR};
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
 
     log::info!("[notification] registering WebView2 notification handlers");
 
@@ -222,9 +229,37 @@ pub fn enable_notification_permissions(
         ]
     }
 
-    fn is_managed_connection(parent: &tauri::WebviewWindow<tauri::Wry>) -> bool {
-        crate::config::get_store_dat_setting(parent.app_handle()).active_connection_id
-            == crate::config::MANAGED_CONNECTION_ID
+    /// 检查 frame 地址是否为 Desktop 托管的回环 Harness。
+    ///
+    /// 外部 DSH 与内置服务可以同时嵌入；不能再以“当前选中连接”判断整个 WebView，
+    /// 否则隐藏的外部 iframe 会获得原生能力，或托管 iframe 会因查看外部工作区被拒绝。
+    fn is_managed_url(source: &str, origins: &[String]) -> bool {
+        origins.iter().any(|origin| {
+            source == origin.as_str()
+                || source
+                    .strip_prefix(origin)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        })
+    }
+
+    /// 权限请求携带精确 URI，因此不以“当前可见工作区”代理整个 WebView 的授权。
+    fn is_managed_permission(
+        args: &ICoreWebView2PermissionRequestedEventArgs,
+        parent: &tauri::WebviewWindow<tauri::Wry>,
+    ) -> bool {
+        let source = unsafe {
+            let mut uri = PWSTR::null();
+            if args.Uri(&mut uri).is_err() || uri.0.is_null() {
+                return false;
+            }
+            let source = uri.to_string().ok();
+            CoTaskMemFree(uri.0.cast());
+            source
+        };
+        let Some(source) = source else {
+            return false;
+        };
+        is_managed_url(&source, &notification_origins(parent))
     }
 
     fn should_allow_permission(kind: COREWEBVIEW2_PERMISSION_KIND) -> bool {
@@ -294,12 +329,39 @@ pub fn enable_notification_permissions(
         parent: tauri::WebviewWindow<tauri::Wry>,
     ) {
         let parent_for_frame = parent.clone();
+        let managed_frame = Arc::new(AtomicBool::new(false));
+        let origins = notification_origins(&parent);
+        let Ok(frame2) = frame3.cast::<ICoreWebView2Frame2>() else {
+            return;
+        };
+        let managed_for_navigation = Arc::clone(&managed_frame);
+        let mut navigation_token = 0i64;
+        let _ = frame2.add_NavigationStarting(
+            &FrameNavigationStartingEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else {
+                    return Ok(());
+                };
+                let mut uri = PWSTR::null();
+                args.Uri(&mut uri)?;
+                let source = if uri.0.is_null() {
+                    String::new()
+                } else {
+                    let source = uri.to_string().unwrap_or_default();
+                    CoTaskMemFree(uri.0.cast());
+                    source
+                };
+                managed_for_navigation.store(is_managed_url(&source, &origins), Ordering::SeqCst);
+                Ok(())
+            })),
+            &mut navigation_token,
+        );
+
         let mut permission_token = 0i64;
 
         let _ = frame3.add_PermissionRequested(
             &FramePermissionRequestedEventHandler::create(Box::new(move |_, args| {
                 if let Some(args) = args {
-                    if !is_managed_connection(&parent_for_frame) {
+                    if !is_managed_permission(&args, &parent_for_frame) {
                         args.SetState(COREWEBVIEW2_PERMISSION_STATE_DEFAULT)?;
                         args.SetHandled(true)?;
                         return Ok(());
@@ -329,11 +391,12 @@ pub fn enable_notification_permissions(
         );
 
         let frame_for_injection = frame3.clone();
+        let managed_for_injection = Arc::clone(&managed_frame);
         let mut content_token = 0i64;
 
         let _ = frame3.add_ContentLoading(
             &FrameContentLoadingEventHandler::create(Box::new(move |_, _| {
-                if !is_managed_connection(&parent) {
+                if !managed_for_injection.load(Ordering::SeqCst) {
                     return Ok(());
                 }
                 // 通知桥、导航桥、样式桥、剪贴板图片桥与缩放快捷键桥需要 iframe 上下文执行。

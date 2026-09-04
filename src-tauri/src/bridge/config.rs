@@ -133,7 +133,19 @@ pub async fn update_dsh_connection(
     Ok(setting)
 }
 
-/// 切换当前显示的 Harness 连接，不启动或停止外部服务。
+/// 设置一个外部 Harness 是否作为并行工作区保持连接。
+#[tauri::command]
+pub async fn set_dsh_connection_connected(
+    app_handle: AppHandle,
+    id: String,
+    connected: bool,
+) -> Result<config::Setting, String> {
+    let setting = config::set_dsh_connection_connected(&app_handle, id, connected)?;
+    crate::service::backup::schedule::mark_config_changed(&app_handle);
+    Ok(setting)
+}
+
+/// 选择当前可见工作区，不启动或停止外部服务。
 #[tauri::command]
 pub async fn select_dsh_connection(
     app_handle: AppHandle,

@@ -1,23 +1,17 @@
-/* eslint-disable react/dom-no-unsafe-iframe-sandbox */
-import { CircleExclamation } from '@gravity-ui/icons'
-import { useRef } from 'react'
-import { useTranslation } from 'react-i18next'
+import { invoke } from '@tauri-apps/api/core'
+import { useRef, useState } from 'react'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { PluginRecovery } from '@/components/plugin-recovery'
+import { queryClient } from '@/config/client'
+import { useAppConfig } from '@/hooks/use-app-config'
 import { useDesktopZoom } from '@/hooks/use-desktop-zoom'
 import { useIframeShim } from '@/hooks/use-iframe-shim'
 import { store } from '@/store'
-import { Loadable } from './loadable'
+import { DshWorkspaces, MANAGED_CONNECTION_ID } from './dsh-workspaces'
 import { Navbar } from './navbar'
 import { PreinstallSetup } from './preinstall-setup'
 import { Setup } from './setup'
-
-const STARTUP_STATUS_KEYS = {
-  'plugin-install': 'status.loading_internal',
-  'process-boot': 'status.loading_process',
-  'client-modules': 'status.loading_client_modules',
-} as const
 
 /**
  * 主区域视图：壳层导航栏（Navbar）常驻顶部，
@@ -26,23 +20,42 @@ const STARTUP_STATUS_KEYS = {
  * 状态与方法全部来自 harness store，不再接收 props。
  */
 export function Webview() {
-  const { t } = useTranslation()
   const {
     status,
     serviceHealthy,
-    startupPhase,
     iframeError,
     iframeKey,
     iframeSrc,
     serviceUrl,
-    connectionKind,
     recovery,
   } = useStore(store.harness)
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const { data: config } = useAppConfig()
+  const [requestedConnectionId, setRequestedConnectionId] = useState<string>()
+  const configuredConnectionId = config?.active_connection_id ?? MANAGED_CONNECTION_ID
+  const configuredConnectionIsConnected = configuredConnectionId === MANAGED_CONNECTION_ID
+    || config?.connected_connection_ids.includes(configuredConnectionId)
+  const requestedConnectionIsConnected = requestedConnectionId === MANAGED_CONNECTION_ID
+    || config?.connected_connection_ids.includes(requestedConnectionId ?? '')
+  const selectedConnectionId = requestedConnectionId !== undefined && requestedConnectionIsConnected
+    ? requestedConnectionId
+    : configuredConnectionIsConnected ? configuredConnectionId : MANAGED_CONNECTION_ID
 
   useDesktopZoom(iframeRef)
-  useIframeShim(iframeRef, connectionKind === 'managed')
+  useIframeShim(iframeRef, true)
+
+  function selectConnection(id: string) {
+    setRequestedConnectionId(id)
+    void invoke('select_dsh_connection', { id })
+      .then((updatedConfig) => {
+        queryClient.setQueryData(['config'], updatedConfig)
+      })
+      .catch((error) => {
+        console.error('[Webview] failed to select DSH workspace:', error)
+        setRequestedConnectionId(undefined)
+      })
+  }
 
   if (status === 'error') {
     return (
@@ -83,38 +96,21 @@ export function Webview() {
 
   return (
     <main className="relative flex min-h-0 flex-1 flex-col bg-canvas">
-      <Navbar iframeRef={iframeRef} />
-
-      {/* iframe 区域：加载失败时用覆盖层展示重试（iframe 保持挂载，重试复用） */}
-      <div className="relative min-h-0 flex-1">
-        <If
-          cond={serviceHealthy}
-          else={<Loadable subtitle={t(STARTUP_STATUS_KEYS[startupPhase])} />}
-        >
-          <iframe
-            key={iframeKey}
-            ref={iframeRef}
-            className="block h-full w-full border-none bg-load-bg"
-            src={iframeSrc}
-            allow="accelerometer; ambient-light-sensor; autoplay; battery; camera; clipboard-read; clipboard-write; display-capture; document-domain; encrypted-media; fullscreen; gamepad; geolocation; gyroscope; hid; idle-detection; keyboard-map; magnetometer; microphone; midi; payment; picture-in-picture; publickey-credentials-get; screen-wake-lock; serial; speaker-selection; usb; web-share; xr-spatial-tracking"
-            sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads allow-storage-access-by-user-activation"
-            onLoad={store.harness.markIframeLoaded}
-            onError={store.harness.markIframeError}
-            title={t('app.open_editor')}
-          />
-        </If>
-
-        <If cond={serviceHealthy && iframeError}>
-          <div className="absolute inset-0 z-[1]">
-            <Loadable
-              icon={CircleExclamation}
-              title={t('ui.iframe_error')}
-              errorMsg={t('ui.ensure_running', { url: serviceUrl })}
-              onRetry={store.harness.refreshIframe}
-            />
-          </div>
-        </If>
-      </div>
+      <Navbar iframeRef={selectedConnectionId === MANAGED_CONNECTION_ID ? iframeRef : undefined} />
+      <DshWorkspaces
+        config={config}
+        selectedConnectionId={selectedConnectionId}
+        onSelectConnection={selectConnection}
+        managedIframeRef={iframeRef}
+        managedIframeSrc={iframeSrc}
+        managedIframeKey={iframeKey}
+        managedHealthy={serviceHealthy}
+        managedIframeError={iframeError}
+        managedServiceUrl={serviceUrl}
+        onManagedIframeLoad={store.harness.markIframeLoaded}
+        onManagedIframeError={store.harness.markIframeError}
+        onManagedRetry={store.harness.refreshIframe}
+      />
     </main>
   )
 }

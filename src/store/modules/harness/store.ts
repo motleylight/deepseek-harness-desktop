@@ -12,7 +12,7 @@ import type {
   SetupStatus,
   SidebarBusyAction,
 } from './types'
-import type { AppConfig, DshConnection } from '@/hooks/use-app-config'
+import type { AppConfig } from '@/hooks/use-app-config'
 import type { ReadinessPollResult, ReadinessProbeResult, StartupPhase } from '@/utils/readiness'
 import { emitter } from '@hairy/react-lib'
 import { invoke } from '@tauri-apps/api/core'
@@ -37,9 +37,7 @@ const PLUGIN_ACTIVITY_CHECK_INTERVAL = 1000
 const IFRAME_RECOVERY_ABSOLUTE_TIMEOUT = 60000
 /** 启动失败时从服务日志尾部挑选的原始行上限（ANSI 清洗后按行截断） */
 const LOG_TAIL_MAX_BYTES = 16 * 1024
-const MANAGED_CONNECTION_ID = 'managed-local'
-
-type ConnectionKind = 'managed' | 'external'
+type ConnectionKind = 'managed'
 
 /** 启动失败错误：附带从 dsh 服务日志中读取的真实错误行与可选的冲突提示 */
 interface StartupError extends Error {
@@ -90,12 +88,6 @@ function generateTimestampedUrl(baseUrl: string, managed: boolean): string {
   if (managed)
     url.searchParams.set('dsh-desktop-managed', '1')
   return url.toString()
-}
-
-function activeExternalConnection(config: AppConfig): DshConnection | undefined {
-  if (config.active_connection_id === MANAGED_CONNECTION_ID)
-    return undefined
-  return config.connections.find(connection => connection.id === config.active_connection_id)
 }
 
 /** 通过 Rust 代理探测服务健康状态（超时 8s，网络抖动时重试） */
@@ -272,7 +264,7 @@ export const harness = defineStore({
     iframeKey: 0,
     serviceHealthy: false,
     serviceRunning: false,
-    /** 当前 iframe 的来源；外部连接绝不进入本地进程生命周期。 */
+    /** 仅记录桌面端托管的本地 Harness 生命周期。 */
     connectionKind: 'managed' as ConnectionKind,
     startupPhase: 'plugin-install' as StartupPhase,
     startupReason: '',
@@ -626,62 +618,6 @@ export const harness = defineStore({
       }
     },
 
-    /** 完成外部连接的可达性探测后，才提交新的 iframe 来源。 */
-    async activateExternalConnection(connection: DshConnection, token: number, persist: boolean) {
-      await invoke<string>('probe_dsh_connection', { url: connection.url })
-      if (token !== bootToken)
-        return
-
-      if (persist) {
-        const config = await invoke<AppConfig>('select_dsh_connection', { id: connection.id })
-        if (token !== bootToken)
-          return
-        queryClient.setQueryData(['config'], config)
-      }
-
-      iframeReloadGate.reset()
-      if (iframeRefreshTimer !== undefined) {
-        clearTimeout(iframeRefreshTimer)
-        iframeRefreshTimer = undefined
-      }
-      this.connectionKind = 'external'
-      this.serviceUrl = connection.url
-      this.iframeSrc = generateTimestampedUrl(connection.url, false)
-      this.serviceHealthy = true
-      this.serviceRunning = false
-      this.iframeLoaded = false
-      this.iframeError = false
-      this.iframeKey++
-      this.status = 'ready'
-      this.errorMsg = ''
-      this.errorLogs = []
-      this.pluginConflictHint = ''
-      this.inotifyLimitHint = ''
-      this.recovery = initialRecovery
-      this.dismissedRecoveryIds = []
-    },
-
-    /** 切换展示目标；外部连接不会影响桌面端托管的本地进程。 */
-    async switchConnection(id: string, force = false) {
-      const config = await invoke<AppConfig>('get_app_config')
-      const selectedKind: ConnectionKind = id === MANAGED_CONNECTION_ID ? 'managed' : 'external'
-      if (!force && id === config.active_connection_id && selectedKind === this.connectionKind && this.serviceHealthy)
-        return
-      if (id === MANAGED_CONNECTION_ID) {
-        const updated = await invoke<AppConfig>('select_dsh_connection', { id })
-        queryClient.setQueryData(['config'], updated)
-        this.connectionKind = 'managed'
-        await this.boot()
-        return
-      }
-
-      const connection = config.connections.find(item => item.id === id)
-      if (!connection)
-        throw new Error('CONNECTION_NOT_FOUND')
-      const token = ++bootToken
-      await this.activateExternalConnection(connection, token, true)
-    },
-
     /** 启动流程：检测环境/安装依赖 → 拉起服务 → 已安装时后台检查更新 */
     async boot() {
       const token = ++bootToken
@@ -704,8 +640,6 @@ export const harness = defineStore({
       this.recovery = { required: false, info: null, attempts: this.recovery.attempts, busy: false }
       this.status = 'ready'
       let unlistenInstall: UnlistenFn | null = null
-      let externalConnection: DshConnection | undefined
-
       try {
         // 事件监听失败（例如 IPC 自定义协议被 CSP 拦截、回退 postMessage 也异常）
         // 不应阻断启动流程，因此容错跳过。
@@ -717,21 +651,6 @@ export const harness = defineStore({
         }
         const config = await invoke<AppConfig>('get_app_config')
         queryClient.setQueryData(['config'], config)
-        externalConnection = activeExternalConnection(config)
-        if (externalConnection) {
-          try {
-            await this.activateExternalConnection(externalConnection, token, false)
-          }
-          catch (error) {
-            if (token !== bootToken)
-              return
-            this.connectionKind = 'external'
-            this.serviceUrl = externalConnection.url
-            this.serviceRunning = false
-            throw error
-          }
-          return
-        }
 
         this.connectionKind = 'managed'
         const runtimeInfo = await invoke<{ service_url: string }>('get_runtime_info')
@@ -814,10 +733,6 @@ export const harness = defineStore({
         if (token !== bootToken)
           return
         console.error('[Harness] startup failed:', err)
-        if (externalConnection) {
-          this.fail(String(err))
-          return
-        }
         const startupError = await attachStartupDiagnostics(err)
         // 尝试从日志定位问题插件：能定位则弹出修复界面（全屏恢复页）
         await this.reviewStartupRecovery(startupError.logLines ?? startupError.logs ?? [])

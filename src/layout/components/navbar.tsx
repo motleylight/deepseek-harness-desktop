@@ -2,7 +2,6 @@ import type { RefObject } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
-  ChevronDown,
   LayoutSideContent,
   LayoutSideContentLeft,
   Minus,
@@ -22,7 +21,6 @@ import { ConfigDialog } from '@/components/config-dialog'
 import { ConnectionDialog } from '@/components/connection-dialog'
 import { DesktopAboutDialog } from '@/components/desktop-about-dialog'
 import { DesktopUpdateDialog } from '@/components/desktop-update-dialog'
-import { useAppConfig } from '@/hooks/use-app-config'
 import { useDshPlugins } from '@/hooks/use-dsh-plugins'
 import { useIframeTauri } from '@/hooks/use-iframe-tauri'
 import { store } from '@/store'
@@ -127,7 +125,6 @@ export function Navbar({ iframeRef }: NavbarProps) {
   const { sidebarCollapsed, canGoBack, canGoForward, sendNav } = useIframeTauri(iframeRef)
   const { updateInfo } = useStore(store.desktopUpdater)
   const { connectionKind } = useStore(store.harness)
-  const { data: config } = useAppConfig()
 
   const openConfigDialog = useOverlay(ConfigDialog)
   const openConnectionDialog = useOverlay(ConnectionDialog)
@@ -136,10 +133,6 @@ export function Navbar({ iframeRef }: NavbarProps) {
   // 仅当 dsh-tauri 插件启用（已安装）时显示左侧导航控件
   const tauriEnabled = connectionKind === 'managed'
     && plugins.some(plugin => plugin.id === TAURI_PLUGIN_ID)
-  const activeExternalConnection = config?.connections.find(
-    connection => connection.id === config.active_connection_id,
-  )
-  const connectionLabel = activeExternalConnection?.name ?? t('connections.managed_label')
   function handleWindowAction(action: 'minimize' | 'maximize' | 'background') {
     const appWindow = getCurrentWindow()
     switch (action) {
@@ -192,13 +185,6 @@ export function Navbar({ iframeRef }: NavbarProps) {
 
   function handleManageConnections() {
     void openConnectionDialog().catch(() => {})
-  }
-
-  function handleConnectionSelection(id: string) {
-    void store.harness.switchConnection(id).catch((error) => {
-      console.error('[Navbar] failed to switch connection:', error)
-      toast(t('connections.switch_failed'), { variant: 'danger' })
-    })
   }
 
   /** 「检查更新」：先检查，有更新才弹框；检查失败提示错误而非「已是最新」 */
@@ -348,54 +334,15 @@ export function Navbar({ iframeRef }: NavbarProps) {
         </Chip>
       </If>
 
-      <Dropdown>
-        <Button
-          className="ml-1 max-w-52 rounded-lg h-7 px-2 text-xs"
-          size="sm"
-          variant="ghost"
-          aria-label={t('connections.selector_label')}
-        >
-          <span className="truncate">{connectionLabel}</span>
-          <ChevronDown className="size-3.5 shrink-0" />
-        </Button>
-        <Dropdown.Popover className="w-72 rounded-md">
-          <Dropdown.Menu>
-            <Dropdown.Item
-              className="rounded-md"
-              id="managed-local"
-              textValue={t('connections.managed_label')}
-              onAction={() => handleConnectionSelection('managed-local')}
-            >
-              <span className="flex w-full flex-col gap-0.5">
-                <Label>{t('connections.managed_label')}</Label>
-                <Description>{t('connections.managed_url')}</Description>
-              </span>
-            </Dropdown.Item>
-            {config?.connections.map(connection => (
-              <Dropdown.Item
-                key={connection.id}
-                className="rounded-md"
-                id={connection.id}
-                textValue={connection.name}
-                onAction={() => handleConnectionSelection(connection.id)}
-              >
-                <span className="flex w-full flex-col gap-0.5">
-                  <Label>{connection.name}</Label>
-                  <Description className="truncate font-mono">{connection.url}</Description>
-                </span>
-              </Dropdown.Item>
-            ))}
-            <Dropdown.Item
-              className="rounded-md"
-              id="manage-dsh-connections"
-              textValue={t('connections.manage')}
-              onAction={handleManageConnections}
-            >
-              <Label>{t('connections.manage')}</Label>
-            </Dropdown.Item>
-          </Dropdown.Menu>
-        </Dropdown.Popover>
-      </Dropdown>
+      <Button
+        className="ml-1 rounded-lg h-7 px-2 text-xs"
+        size="sm"
+        variant="ghost"
+        aria-label={t('connections.manage')}
+        onPress={handleManageConnections}
+      >
+        {t('connections.manage')}
+      </Button>
 
       {/* 拖拽区：Tauri 原生拖拽（仅此元素带 data-tauri-drag-region，按钮不受影响）。
            touch-none 让触摸被当作拖拽而非滚动/平移手势，配合 onPointerDown 支持触摸/笔。 */}
