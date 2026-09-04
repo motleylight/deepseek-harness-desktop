@@ -454,9 +454,6 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
             crate::desktop::style::IFRAME_STYLES_JS,
         ))
         .initialization_script_for_all_frames(managed_iframe_script(
-            crate::desktop::workspace_tree::WORKSPACE_TREE_BRIDGE_JS,
-        ))
-        .initialization_script_for_all_frames(managed_iframe_script(
             crate::desktop::paste::PASTE_SHIM_JS,
         ))
         .initialization_script_for_all_frames(managed_iframe_script(
@@ -466,7 +463,7 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
             crate::desktop::zoom::ZOOM_SHORTCUT_BRIDGE_JS,
         ))
         .initialization_script_for_all_frames(external_iframe_script(
-            crate::desktop::external_workspace::EXTERNAL_WORKSPACE_BRIDGE_JS,
+            crate::desktop::plugin_client::EXTERNAL_CONNECTIONS_ADAPTER,
         ));
 
     let webview_window = webview_builder.build()?;

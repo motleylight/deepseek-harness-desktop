@@ -1,0 +1,5 @@
+export { DshConnectionsProvider } from './context'
+export { DshConnectionPanel } from './panel'
+export { useDshConnectionSelection } from './selection'
+export type { ConnectionsConfig, DesktopConnectionHost, DshConnection } from './types'
+export { DshWorkspaces, MANAGED_CONNECTION_ID } from './workspaces'

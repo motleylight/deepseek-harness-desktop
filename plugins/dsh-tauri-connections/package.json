@@ -1,0 +1,38 @@
+{
+  "name": "dsh-tauri-connections",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Concurrent DSH connections, workspace groups and desktop connection settings.",
+  "license": "MIT",
+  "repository": "github:motleylight/deepseek-harness-desktop",
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.cjs",
+    "./desktop": "./desktop/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["README.en.md", "README.md", "cordis.patch.yml", "desktop", "dist", "locales"],
+  "dsh": {
+    "client": { "inject": ["@deepseek-ai/dsh-client-runtime"], "platform": "web" },
+    "bundle": { "patch": "./cordis.patch.yml" }
+  },
+  "scripts": { "build": "node build.mjs" },
+  "peerDependencies": {
+    "@gravity-ui/icons": "^2.21.0",
+    "@heroui/react": "^3.2.4",
+    "@tauri-apps/api": "^2.11.1",
+    "react": "^19.2.0",
+    "react-if-lite": "^0.1.0",
+    "react-use": "^17.6.1",
+    "tailwind-variants": "^3.3.1"
+  },
+  "peerDependenciesMeta": {
+    "@gravity-ui/icons": { "optional": true },
+    "@heroui/react": { "optional": true },
+    "@tauri-apps/api": { "optional": true },
+    "react": { "optional": true },
+    "react-if-lite": { "optional": true },
+    "react-use": { "optional": true },
+    "tailwind-variants": { "optional": true }
+  }
+}

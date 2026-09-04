@@ -120,6 +120,7 @@ const command = defineCommand({
       : rawArgs
 
     if (isDev) {
+      await exec('pnpm', ['--dir', 'plugins/dsh-tauri-connections', 'build'])
       await ensureInternalPlugins(args.yes === true)
     }
 

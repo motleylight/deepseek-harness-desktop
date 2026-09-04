@@ -1,5 +1,13 @@
 [
   {
+    "id": "dsh-tauri-connections",
+    "spec": "workspace:plugins/dsh-tauri-connections",
+    "package": "dsh-tauri-connections",
+    "name": "DSH Connections",
+    "description": "Concurrent DSH connections and workspace groups",
+    "repoUrl": "https://github.com/motleylight/deepseek-harness-desktop/tree/codex/dsh-connections-plugin/plugins/dsh-tauri-connections"
+  },
+  {
     "id": "dsh-tauri",
     "spec": "dsh-tauri",
     "name": "DSH Tauri",

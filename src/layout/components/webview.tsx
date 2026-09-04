@@ -1,14 +1,12 @@
-import { invoke } from '@tauri-apps/api/core'
-import { useRef, useState } from 'react'
+import { DshWorkspaces, MANAGED_CONNECTION_ID, useDshConnectionSelection } from 'dsh-tauri-connections/desktop'
+import { useRef } from 'react'
 import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { PluginRecovery } from '@/components/plugin-recovery'
-import { queryClient } from '@/config/client'
 import { useAppConfig } from '@/hooks/use-app-config'
 import { useDesktopZoom } from '@/hooks/use-desktop-zoom'
 import { useIframeShim } from '@/hooks/use-iframe-shim'
 import { store } from '@/store'
-import { DshWorkspaces, MANAGED_CONNECTION_ID } from './dsh-workspaces'
 import { Navbar } from './navbar'
 import { PreinstallSetup } from './preinstall-setup'
 import { Setup } from './setup'
@@ -32,30 +30,10 @@ export function Webview() {
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const { data: config } = useAppConfig()
-  const [requestedConnectionId, setRequestedConnectionId] = useState<string>()
-  const configuredConnectionId = config?.active_connection_id ?? MANAGED_CONNECTION_ID
-  const configuredConnectionIsConnected = configuredConnectionId === MANAGED_CONNECTION_ID
-    || config?.connected_connection_ids.includes(configuredConnectionId)
-  const requestedConnectionIsConnected = requestedConnectionId === MANAGED_CONNECTION_ID
-    || config?.connected_connection_ids.includes(requestedConnectionId ?? '')
-  const selectedConnectionId = requestedConnectionId !== undefined && requestedConnectionIsConnected
-    ? requestedConnectionId
-    : configuredConnectionIsConnected ? configuredConnectionId : MANAGED_CONNECTION_ID
+  const { selectedConnectionId, selectConnection } = useDshConnectionSelection()
 
   useDesktopZoom(iframeRef)
   useIframeShim(iframeRef, true)
-
-  function selectConnection(id: string) {
-    setRequestedConnectionId(id)
-    void invoke('select_dsh_connection', { id })
-      .then((updatedConfig) => {
-        queryClient.setQueryData(['config'], updatedConfig)
-      })
-      .catch((error) => {
-        console.error('[Webview] failed to select DSH workspace:', error)
-        setRequestedConnectionId(undefined)
-      })
-  }
 
   if (status === 'error') {
     return (

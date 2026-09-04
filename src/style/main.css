@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../plugins/dsh-tauri-connections/desktop";
 
 @config "../../tailwind.config.js";
 @import "@heroui/styles"; 
@@ -117,4 +118,3 @@ html[data-theme="light"] {
     font-size: 14px;
   }
 }
-

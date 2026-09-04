@@ -1,11 +1,12 @@
 /**
  * prebuild：把 `src-tauri/resources/internal-plugins.json` 中声明的内部插件
  * 制备为随包产物，拷入 `src-tauri/resources/internal-plugins/<id>/`
- * （随 `bundle.resources` 随安装包分发）。两种来源：
+ * （随 `bundle.resources` 随安装包分发）。三种来源：
  *
  * - `github:owner/repo`：从上游仓库克隆、安装依赖并构建（源码形态的插件）；
  * - npm 包名（`name[@version]`）：从 npm registry 拉取已发布产物，跳过构建
  *   （发布包自带 lib/，如 dsh-tauri@0.2.0）。
+ * - `workspace:<path>`：构建仓库内的插件源码并收集其发布文件。
  *
  * 由 `pnpm build` 的 prebuild 生命周期自动触发（tauri 的 `beforeBuildCommand` 为
  * `pnpm build`，pnpm 先执行 `prebuild` 脚本）。应用启动时（service::plugin::internal）
@@ -27,7 +28,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import process from 'node:process'
 
 interface InternalPlugin {
@@ -127,6 +128,15 @@ function collectBundle(preset: InternalPlugin, clone: string): void {
 
 /** 构建单个 internal 插件：git 来源（克隆 → 装依赖 → 构建）或 npm 来源（拉产物）。 */
 function buildPlugin(preset: InternalPlugin): void {
+  if (preset.spec.startsWith('workspace:')) {
+    const source = resolve(REPO_ROOT, preset.spec.slice('workspace:'.length))
+    const suffix = relative(REPO_ROOT, source)
+    if (suffix.startsWith('..') || isAbsolute(suffix))
+      die('Workspace plugin must be inside the repository')
+    run('pnpm', ['run', 'build'], source)
+    collectBundle(preset, source)
+    return
+  }
   const dest = join(BUNDLE_ROOT, preset.id)
   rmSync(dest, { recursive: true, force: true })
 
@@ -172,6 +182,11 @@ function main(): void {
   }
   console.log(`[prebuild] 拉取 ${internal.length} 个 internal 插件: ${internal.map(p => p.id).join(', ')}`)
   for (const plugin of internal) {
+    if (process.env.DSH_LOCAL_PLUGIN_BUILD === '1' && !plugin.spec.startsWith('workspace:')) {
+      if (!existsSync(join(BUNDLE_ROOT, plugin.id, 'package.json')))
+        die(`Missing cached internal plugin: ${plugin.id}`)
+      continue
+    }
     buildPlugin(plugin)
   }
   console.log(`[prebuild] 完成 → ${BUNDLE_ROOT}`)

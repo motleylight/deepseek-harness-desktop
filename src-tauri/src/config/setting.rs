@@ -508,7 +508,6 @@ pub fn add_dsh_connection(
             url,
         });
         setting.connected_connection_ids.push(id.clone());
-        setting.active_connection_id = id;
     }))
 }
 

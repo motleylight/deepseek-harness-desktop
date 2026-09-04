@@ -18,7 +18,6 @@ import { If } from 'react-if-lite'
 import { cn } from 'tailwind-variants'
 import { useStore } from 'valtio-define'
 import { ConfigDialog } from '@/components/config-dialog'
-import { ConnectionDialog } from '@/components/connection-dialog'
 import { DesktopAboutDialog } from '@/components/desktop-about-dialog'
 import { DesktopUpdateDialog } from '@/components/desktop-update-dialog'
 import { useDshPlugins } from '@/hooks/use-dsh-plugins'
@@ -127,7 +126,6 @@ export function Navbar({ iframeRef }: NavbarProps) {
   const { connectionKind } = useStore(store.harness)
 
   const openConfigDialog = useOverlay(ConfigDialog)
-  const openConnectionDialog = useOverlay(ConnectionDialog)
   const openAboutDialog = useOverlay(DesktopAboutDialog)
   const openUpdateDialog = useOverlay(DesktopUpdateDialog)
   // 仅当 dsh-tauri 插件启用（已安装）时显示左侧导航控件
@@ -181,10 +179,6 @@ export function Navbar({ iframeRef }: NavbarProps) {
 
   function handleOpenAbout() {
     void openAboutDialog().catch(() => {})
-  }
-
-  function handleManageConnections() {
-    void openConnectionDialog().catch(() => {})
   }
 
   /** 「检查更新」：先检查，有更新才弹框；检查失败提示错误而非「已是最新」 */
@@ -333,16 +327,6 @@ export function Navbar({ iframeRef }: NavbarProps) {
           {t('app.dev_env')}
         </Chip>
       </If>
-
-      <Button
-        className="ml-1 rounded-lg h-7 px-2 text-xs"
-        size="sm"
-        variant="ghost"
-        aria-label={t('connections.manage')}
-        onPress={handleManageConnections}
-      >
-        {t('connections.manage')}
-      </Button>
 
       {/* 拖拽区：Tauri 原生拖拽（仅此元素带 data-tauri-drag-region，按钮不受影响）。
            touch-none 让触摸被当作拖拽而非滚动/平移手势，配合 onPointerDown 支持触摸/笔。 */}

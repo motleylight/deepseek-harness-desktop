@@ -59,6 +59,9 @@ jobs:
       - name: Type check
         run: pnpm run typecheck
 
+      - name: Build connection plugin
+        run: pnpm --dir plugins/dsh-tauri-connections build
+
       - name: Lint
         run: pnpm run lint
 
@@ -102,6 +105,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Build connection plugin for native embedding
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir plugins/dsh-tauri-connections build
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2

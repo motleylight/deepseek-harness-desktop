@@ -1,9 +1,10 @@
 import type { AppConfig } from '@/hooks/use-app-config'
-import { ArrowRotateRight, ArrowUpRightFromSquare, ChevronRight, Copy, Folder, Power, TrashBin } from '@gravity-ui/icons'
-import { Button, Chip, Description, Input, Link, ListBox, Select, Spinner, Surface, Switch } from '@heroui/react'
+import { ChevronRight, Copy, Folder, TrashBin } from '@gravity-ui/icons'
+import { Button, Description, Input, Link, ListBox, Select, Surface, Switch } from '@heroui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { DshConnectionPanel } from 'dsh-tauri-connections/desktop'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
@@ -40,7 +41,7 @@ export interface CliLinkStatus {
 
 export function ConfigDebug() {
   const { t, i18n } = useTranslation()
-  const { serviceRunning, busyAction, connectionKind, serviceUrl } = useStore(store.harness)
+  const { connectionKind } = useStore(store.harness)
   const { updateInfo } = useStore(store.harnessUpdater)
   const isManagedConnection = connectionKind === 'managed'
 
@@ -130,17 +131,6 @@ export function ConfigDebug() {
     },
   })
 
-  const { mutate: onCopyServiceUrl } = useMutation({
-    mutationFn: async () => {
-      await writeClipboardText(serviceUrl)
-      toast(t('messages.copy_success'))
-    },
-    onError: (err: unknown) => {
-      console.error('[ConfigDebug] copy url failed:', err)
-      toast(t('messages.copy_failed'), { variant: 'danger' })
-    },
-  })
-
   const { mutate: onSavePort } = useMutation({
     mutationFn: async (port: number) => {
       // 保存前校验：必须是 1–65535 的整数（输入框可能被清空成 0 / 浮点 / NaN）
@@ -183,78 +173,7 @@ export function ConfigDebug() {
 
   return (
     <div className="space-y-3">
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-            {t('ui.connection_status')}
-          </span>
-          <Chip
-            size="sm"
-            variant="soft"
-            color={isManagedConnection ? (serviceRunning ? 'success' : 'danger') : 'success'}
-            className="font-medium"
-          >
-            {isManagedConnection ? (serviceRunning ? t('ui.running') : t('ui.stopped')) : t('ui.connected')}
-          </Chip>
-        </div>
-        <div className="space-y-1.5">
-          <div className="flex gap-1.5">
-            <Input
-              readOnly
-              variant="secondary"
-              value={serviceUrl}
-              aria-label={t('ui.service_url')}
-              className="font-mono text-xs flex-1 rounded-md"
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              isIconOnly
-              className="rounded-md"
-
-              onPress={() => onCopyServiceUrl()}
-              aria-label={t('buttons.copy')}
-            >
-              <Copy className="size-3.5" />
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="rounded-md"
-              isIconOnly
-              onPress={store.harness.openBrowser}
-              isDisabled={busyAction !== null}
-              aria-label={t('app.open_browser')}
-            >
-              <If cond={busyAction === 'openBrowser'} then={<Spinner size="sm" color="current" />} else={<ArrowUpRightFromSquare className="size-3.5" />} />
-            </Button>
-          </div>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <If cond={isManagedConnection && serviceRunning}>
-          <Button
-            size="sm"
-            variant="tertiary"
-            className="flex-1 rounded-md"
-            onPress={store.harness.restart}
-            isDisabled={busyAction !== null}
-          >
-            <If cond={busyAction === 'restart'} then={<Spinner size="sm" color="current" />} else={<ArrowRotateRight className="size-3.5" />} />
-            {t('app.restart')}
-          </Button>
-          <Button
-            size="sm"
-            variant="danger"
-            className="flex-1 rounded-md"
-            onPress={store.harness.shutdown}
-            isDisabled={busyAction !== null}
-          >
-            <If cond={busyAction === 'shutdown'} then={<Spinner size="sm" color="current" />} else={<Power className="size-3.5" />} />
-            {t('app.shutdown')}
-          </Button>
-        </If>
-      </div>
+      <DshConnectionPanel />
       <If cond={!isManagedConnection}>
         <Description>{t('connections.external_settings_hint')}</Description>
       </If>

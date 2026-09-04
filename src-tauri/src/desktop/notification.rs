@@ -397,7 +397,7 @@ pub fn enable_notification_permissions(
             &FrameContentLoadingEventHandler::create(Box::new(move |_, _| {
                 if !managed_for_injection.load(Ordering::SeqCst) {
                     let script = HSTRING::from(
-                        crate::desktop::external_workspace::EXTERNAL_WORKSPACE_BRIDGE_JS,
+                        crate::desktop::plugin_client::EXTERNAL_CONNECTIONS_ADAPTER,
                     );
                     let _ = frame_for_injection.ExecuteScript(
                         &script,
@@ -410,7 +410,6 @@ pub fn enable_notification_permissions(
                     crate::desktop::notification::NOTIFICATION_SHIM_JS,
                     crate::desktop::nav::NAV_SHIM_JS,
                     crate::desktop::style::IFRAME_STYLES_JS,
-                    crate::desktop::workspace_tree::WORKSPACE_TREE_BRIDGE_JS,
                     crate::desktop::paste::PASTE_SHIM_JS,
                     crate::desktop::plugin_boot::PLUGIN_BOOT_RELOAD_JS,
                     crate::desktop::zoom::ZOOM_SHORTCUT_BRIDGE_JS,

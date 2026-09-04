@@ -1,19 +1,22 @@
 /* eslint-disable react/dom-no-unsafe-iframe-sandbox */
 import type { RefObject } from 'react'
-import type { AppConfig, DshConnection } from '@/hooks/use-app-config'
+import type { ConnectionsConfig, DshConnection } from './types'
 import { CircleExclamation } from '@gravity-ui/icons'
+import { Button } from '@heroui/react'
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { useEvent } from 'react-use'
 import { cn } from 'tailwind-variants'
-import { queryClient } from '@/config/client'
-import { writeClipboardText } from '@/utils/clipboard'
-import { getIframeOrigin } from '@/utils/iframe'
-import { Loadable } from './loadable'
+import { useConnectionHost } from './host'
+import { ConnectionLoading as Loadable } from './loading'
 
 export const MANAGED_CONNECTION_ID = 'managed-local'
+
+function getIframeOrigin(ref: RefObject<HTMLIFrameElement | null>) {
+  const src = ref.current?.src
+  return src ? externalOrigin(src) : null
+}
 
 type ExternalWorkspaceStatus = 'checking' | 'ready' | 'error'
 
@@ -57,7 +60,7 @@ interface ExternalDshWorkspaceProps {
 }
 
 export interface DshWorkspacesProps {
-  config: AppConfig | undefined
+  config: ConnectionsConfig | undefined
   selectedConnectionId: string
   onSelectConnection: (id: string) => void
   managedIframeRef: RefObject<HTMLIFrameElement | null>
@@ -128,7 +131,9 @@ function ExternalDshWorkspace({
   onFrameChange,
   onReady,
 }: ExternalDshWorkspaceProps) {
-  const { t } = useTranslation()
+  const { t, setStatus: updateStatus, statuses } = useConnectionHost()
+  const statusChangeRef = useRef(updateStatus)
+  statusChangeRef.current = updateStatus
   const frameChangeRef = useRef(onFrameChange)
   const [status, setStatus] = useState<ExternalWorkspaceStatus>('checking')
   const [error, setError] = useState('')
@@ -149,6 +154,7 @@ function ExternalDshWorkspace({
 
   useEffect(() => {
     let disposed = false
+    statusChangeRef.current(connection.id, { state: 'checking' })
     void invoke<string>('probe_dsh_connection', { url: connection.url })
       .then(() => {
         if (disposed)
@@ -162,10 +168,12 @@ function ExternalDshWorkspace({
         const message = String(reason)
         setError(message)
         setStatus('error')
+        statusChangeRef.current(connection.id, { state: 'error', message })
       })
     return () => {
       disposed = true
       frameChangeRef.current(connection.id, null)
+      statusChangeRef.current(connection.id, null)
     }
   }, [connection.id, connection.url, probeVersion])
 
@@ -175,6 +183,12 @@ function ExternalDshWorkspace({
       style={{ left: `${sidebarWidth}px` }}
       aria-hidden={!selected}
     >
+      <If cond={status === 'ready' && statuses[connection.id]?.state === 'error'}>
+        <div role="alert" className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-canvas p-3 text-sm text-danger">
+          <span className="flex-1">{statuses[connection.id]?.message}</span>
+          <Button size="sm" onPress={retry}>{t('connections.retry')}</Button>
+        </div>
+      </If>
       <If cond={status === 'checking'}>
         <Loadable subtitle={t('connections.checking')} />
       </If>
@@ -218,8 +232,9 @@ export function DshWorkspaces({
   onManagedIframeError,
   onManagedRetry,
 }: DshWorkspacesProps) {
-  const { t } = useTranslation()
+  const { t, updateConfig, copyText, available, setAvailable, setStatus, editConnection, deleteConnection } = useConnectionHost()
   const externalFramesRef = useRef<Record<string, HTMLIFrameElement | null>>({})
+  const lastResponseRef = useRef<Record<string, number>>({})
   const [externalTrees, setExternalTrees] = useState<Record<string, WorkspaceTree>>({})
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const connectedConnections = config?.connections.filter(connection => (
@@ -228,6 +243,10 @@ export function DshWorkspaces({
   const managedName = config?.managed_connection_name || t('connections.managed_label')
 
   function setExternalFrame(id: string, frame: HTMLIFrameElement | null) {
+    if (frame && externalFramesRef.current[id] !== frame)
+      lastResponseRef.current[id] = Date.now()
+    if (!frame)
+      delete lastResponseRef.current[id]
     externalFramesRef.current[id] = frame
   }
 
@@ -320,41 +339,27 @@ export function DshWorkspaces({
           sessionTitle: message.sessionTitle,
         }, origin)
       }
-      else if (action === 'rename' && typeof message.name === 'string') {
-        const updatedConfig = connectionId === MANAGED_CONNECTION_ID
-          ? await invoke<AppConfig>('rename_managed_dsh_connection', { name: message.name })
-          : connection
-            ? await invoke<AppConfig>('update_dsh_connection', { id: connection.id, name: message.name, url: connection.url })
-            : null
-        if (!updatedConfig)
-          throw new Error('CONNECTION_NOT_FOUND')
-        queryClient.setQueryData(['config'], updatedConfig)
+      else if (action === 'request-rename' || action === 'request-edit' || action === 'request-delete') {
+        const target = connectionId === MANAGED_CONNECTION_ID ? { id: connectionId, name: managedName, url: managedServiceUrl } : connection
+        if (!target || (connectionId === MANAGED_CONNECTION_ID && action !== 'request-rename'))
+          throw new Error('CONNECTION_ACTION_INVALID')
+        if (action === 'request-delete')
+          deleteConnection(target)
+        else
+          editConnection({ kind: action === 'request-rename' ? 'rename' : 'edit', connection: target })
       }
       else if (action === 'copy') {
         const url = connectionId === MANAGED_CONNECTION_ID ? managedServiceUrl : connection?.url
         if (!url)
           throw new Error('CONNECTION_NOT_FOUND')
-        await writeClipboardText(url)
-      }
-      else if (action === 'edit' && connection && typeof message.url === 'string') {
-        await invoke('probe_dsh_connection', { url: message.url })
-        const updatedConfig = await invoke<AppConfig>('update_dsh_connection', {
-          id: connection.id,
-          name: connection.name,
-          url: message.url,
-        })
-        queryClient.setQueryData(['config'], updatedConfig)
+        await copyText(url)
       }
       else if (action === 'disconnect' && connection) {
-        const updatedConfig = await invoke<AppConfig>('set_dsh_connection_connected', {
+        const updatedConfig = await invoke<ConnectionsConfig>('set_dsh_connection_connected', {
           id: connection.id,
           connected: false,
         })
-        queryClient.setQueryData(['config'], updatedConfig)
-      }
-      else if (action === 'delete' && connection) {
-        const updatedConfig = await invoke<AppConfig>('remove_dsh_connection', { id: connection.id })
-        queryClient.setQueryData(['config'], updatedConfig)
+        updateConfig(updatedConfig)
       }
       else {
         throw new Error('CONNECTION_ACTION_INVALID')
@@ -374,67 +379,60 @@ export function DshWorkspaces({
     if (data.source === 'dsh-desktop-workspace-tree') {
       if (event.source !== managedIframeRef.current?.contentWindow || event.origin !== getIframeOrigin(managedIframeRef))
         return
-      if (data.type === 'dsh://workspace-tree:layout' && typeof data.sidebarWidth === 'number') {
-        setSidebarWidth(Math.min(480, Math.max(180, Math.round(data.sidebarWidth))))
+      if (data.type === 'dsh://workspace-tree:ready') {
+        setAvailable(true)
+        sendWorkspaceTreeState()
+      }
+      else if (data.type === 'dsh://workspace-tree:disposed') {
+        setAvailable(false)
+        onSelectConnection(MANAGED_CONNECTION_ID)
+      }
+      else if (data.type === 'dsh://workspace-tree:layout' && typeof data.sidebarWidth === 'number') {
+        setSidebarWidth(Math.min(window.innerWidth, Math.max(0, Math.round(data.sidebarWidth))))
       }
       else if (data.type === 'dsh://workspace-tree:action') {
         void handleWorkspaceTreeAction(data)
       }
       return
     }
-    if (data.source !== 'dsh-desktop-external-workspace' || data.type !== 'dsh://external-workspace:tree')
+    if (data.source !== 'dsh-desktop-external-workspace')
       return
     const connection = connectedConnections.find(item => (
       externalFramesRef.current[item.id]?.contentWindow === event.source
     ))
     if (!connection || event.origin !== externalOrigin(connection.url))
       return
-    setExternalTrees(current => ({ ...current, [connection.id]: sanitizeWorkspaceTree(data.tree) }))
+    if (data.type === 'dsh://external-workspace:open-failed') {
+      setStatus(connection.id, { state: 'error', message: t('connections.open_failed') })
+      return
+    }
+    if (data.type !== 'dsh://external-workspace:tree')
+      return
+    lastResponseRef.current[connection.id] = Date.now()
+    const snapshot = sanitizeWorkspaceTree(data.tree)
+    setExternalTrees(current => ({ ...current, [connection.id]: snapshot }))
+    setStatus(connection.id, data.error
+      ? { state: 'error', message: String(data.error) }
+      : { state: 'connected', workspaces: snapshot.workspaces.length, sessions: snapshot.workspaces.reduce((sum, workspace) => sum + workspace.sessions.length, 0) })
   }
 
   useEvent('message', handleMessage)
 
   useEffect(() => {
-    const origin = getIframeOrigin(managedIframeRef)
-    if (!origin || !managedIframeRef.current?.contentWindow)
-      return
-    const connections = (config?.connections ?? []).filter(connection => (
-      config?.connected_connection_ids.includes(connection.id)
-    ))
-    managedIframeRef.current.contentWindow.postMessage({
-      source: 'dsh-desktop',
-      type: 'dsh://workspace-tree:state',
-      state: {
-        managed: { id: MANAGED_CONNECTION_ID, name: managedName, url: managedServiceUrl },
-        connections: connections.map(connection => ({
-          id: connection.id,
-          name: connection.name,
-          url: connection.url,
-        })),
-        selectedConnectionId,
-        trees: externalTrees,
-        labels: {
-          rename: t('connections.rename'),
-          copyAddress: t('connections.copy_address'),
-          editAddress: t('connections.edit_address'),
-          disconnect: t('connections.disconnect'),
-          delete: t('connections.delete'),
-          renameTitle: t('connections.rename_title'),
-          editAddressTitle: t('connections.edit_address_title'),
-          editAddressDescription: t('connections.edit_address_description'),
-          deleteTitle: t('connections.delete_title'),
-          deleteDescription: t('connections.delete_description'),
-          renameDescription: t('connections.rename_description'),
-          nameLabel: t('connections.name'),
-          addressLabel: t('connections.address_label'),
-          cancel: t('buttons.cancel'),
-          save: t('connections.save'),
-          copied: t('connections.copied'),
-          actionFailed: t('connections.action_failed'),
-        },
-      },
-    }, origin)
-  }, [config, externalTrees, managedIframeRef, managedName, managedServiceUrl, selectedConnectionId, t])
+    sendWorkspaceTreeState()
+  })
+
+  useEffect(() => {
+    setAvailable(false)
+    const timer = window.setInterval(() => {
+      const origin = getIframeOrigin(managedIframeRef)
+      managedIframeRef.current?.contentWindow?.postMessage({ source: 'dsh-desktop', type: 'dsh://workspace-tree:ping' }, origin || '*')
+    }, 2000)
+    return () => {
+      window.clearInterval(timer)
+      setAvailable(false)
+    }
+  }, [managedIframeKey, managedIframeSrc, managedIframeRef, setAvailable])
 
   useEffect(() => {
     const connections = (config?.connections ?? []).filter(connection => (
@@ -446,6 +444,8 @@ export function DshWorkspaces({
         const origin = externalOrigin(connection.url)
         if (!frame?.contentWindow || !origin)
           return
+        if (Date.now() - (lastResponseRef.current[connection.id] ?? Date.now()) > 30000)
+          setStatus(connection.id, { state: 'error', message: t('connections.loading_timeout') })
         frame.contentWindow.postMessage(
           { source: 'dsh-desktop', type: 'dsh://external-workspace:refresh' },
           origin,
@@ -453,11 +453,11 @@ export function DshWorkspaces({
       })
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [config])
+  }, [config, setStatus, t])
 
   function handleManagedIframeLoad() {
     onManagedIframeLoad()
-    window.setTimeout(sendWorkspaceTreeState, 0)
+    sendWorkspaceTreeState()
   }
 
   return (
@@ -487,7 +487,7 @@ export function DshWorkspaces({
         </div>
       </If>
 
-      {connectedConnections.map(connection => (
+      {(available ? connectedConnections : []).map(connection => (
         <ExternalDshWorkspace
           key={`${connection.id}:${connection.url}`}
           connection={connection}
