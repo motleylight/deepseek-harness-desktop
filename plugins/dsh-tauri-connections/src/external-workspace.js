@@ -1,5 +1,5 @@
 /** Unprivileged companion for an external frame; all RPC requests stay on its origin. */
-export function mountExternalWorkspace(openById) {
+export function mountExternalWorkspace(openById, parentOrigin) {
   let disposed = false
   let inFlight = false
   const abort = new AbortController()
@@ -12,7 +12,7 @@ export function mountExternalWorkspace(openById) {
     if (disposed)
       return
     try {
-      window.parent.postMessage(Object.assign({ source: BRIDGE_SOURCE }, message), '*')
+      window.parent.postMessage(Object.assign({ source: BRIDGE_SOURCE }, message), parentOrigin)
     }
     catch { /* The parent frame may already be detached during teardown. */ }
   }
@@ -164,7 +164,7 @@ export function mountExternalWorkspace(openById) {
   }
 
   function onMessage(event) {
-    if (event.source !== window.parent)
+    if (event.source !== window.parent || event.origin !== parentOrigin)
       return
     const data = event.data
     if (!data || typeof data !== 'object' || data.source !== HOST_SOURCE)

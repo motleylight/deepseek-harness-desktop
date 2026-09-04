@@ -1,4 +1,6 @@
 /** Mounts the connection groups in the existing DSH workspace tree; returns full teardown. */
+import { isDesktopMessage } from './desktop-message.js'
+
 export function mountWorkspaceTree() {
   if (window === window.top)
     return () => {}
@@ -10,6 +12,7 @@ export function mountWorkspaceTree() {
   const collapsed = new Set()
   let lastWidth = -1
   let previousState = ''
+  let parentOrigin = '*'
   function listen(target, type, callback, capture = false) {
     target.addEventListener(type, callback, capture)
     listeners.push(() => target.removeEventListener(type, callback, capture))
@@ -70,7 +73,7 @@ export function mountWorkspaceTree() {
 
   function post(message) {
     try {
-      window.parent.postMessage(Object.assign({ source: BRIDGE_SOURCE }, message), '*')
+      window.parent.postMessage(Object.assign({ source: BRIDGE_SOURCE }, message), parentOrigin)
     }
     catch { /* The parent frame may already be detached during teardown. */ }
   }
@@ -335,8 +338,9 @@ export function mountWorkspaceTree() {
   }
 
   listen(window, 'message', (event) => {
-    if (event.source !== window.parent)
+    if (!isDesktopMessage(event))
       return
+    parentOrigin = event.origin
     const data = event.data
     if (!data || typeof data !== 'object' || data.source !== HOST_SOURCE)
       return

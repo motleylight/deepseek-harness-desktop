@@ -7,11 +7,11 @@ import { DshConnectionPanel, DshConnectionsProvider, DshWorkspaces, useDshConnec
 import '../../src/style/main.css'
 
 // Manual browser harness: real DSH client modules, in-memory native configuration adapter.
-let config: ConnectionsConfig = { connections: [{ id: 'external', name: '测试环境', url: 'http://127.0.0.1:3182' }], connected_connection_ids: ['external'], managed_connection_name: '开发环境', active_connection_id: 'managed-local' }
+let config: ConnectionsConfig = { connections: [{ id: 'external', name: '测试环境', url: 'http://127.0.0.1:3183' }], connected_connection_ids: ['external'], managed_connection_name: '开发环境', active_connection_id: 'managed-local' }
 mockIPC(async (command, payload) => {
   const args = payload as Record<string, unknown>
   if (command === 'probe_dsh_connection') {
-    if (!String(args.url).includes(':3182'))
+    if (!String(args.url).includes(':3183'))
       throw new Error('TEST_ENDPOINT_UNREACHABLE')
     return args.url
   }

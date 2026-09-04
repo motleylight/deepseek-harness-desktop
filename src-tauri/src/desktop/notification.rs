@@ -396,13 +396,6 @@ pub fn enable_notification_permissions(
         let _ = frame3.add_ContentLoading(
             &FrameContentLoadingEventHandler::create(Box::new(move |_, _| {
                 if !managed_for_injection.load(Ordering::SeqCst) {
-                    let script = HSTRING::from(
-                        crate::desktop::plugin_client::EXTERNAL_CONNECTIONS_ADAPTER,
-                    );
-                    let _ = frame_for_injection.ExecuteScript(
-                        &script,
-                        &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))),
-                    );
                     return Ok(());
                 }
                 // 通知桥、导航桥、样式桥、剪贴板图片桥与缩放快捷键桥需要 iframe 上下文执行。

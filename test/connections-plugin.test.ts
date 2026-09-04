@@ -10,7 +10,7 @@ const host = { postMessage: vi.fn() }
 let dispose: (() => void) | undefined
 
 function send(data: unknown, source: unknown = host) {
-  window.dispatchEvent(new MessageEvent('message', { source: source as Window, data }))
+  window.dispatchEvent(new MessageEvent('message', { source: source as Window, origin: 'http://tauri.localhost', data }))
 }
 
 function state(name = 'Development') {
@@ -55,7 +55,7 @@ describe('connection plugin lifecycle and workspace routing', () => {
     expect(document.querySelector('[data-connection-id="managed-local"]')).toBe(managedRow)
     const remoteSession = [...document.querySelectorAll('[data-depth="session"]')][0] as HTMLElement
     remoteSession.click()
-    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'open-session', connectionId: 'external-1', sessionId: 'same-session-id' }), '*')
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'open-session', connectionId: 'external-1', sessionId: 'same-session-id' }), 'http://tauri.localhost')
     dispose?.()
     expect(document.querySelector('[data-connection-id]')).toBeNull()
     expect(local?.hasAttribute('data-dsh-desktop-managed-child')).toBe(false)
@@ -114,6 +114,18 @@ describe('connection plugin lifecycle and workspace routing', () => {
 })
 
 describe('external DSH companion', () => {
+  it('does not expose workspace data to an arbitrary embedding website', () => {
+    window.location.href = 'http://127.0.0.1:3182/?dsh-desktop-external=1'
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    apply({ sessions: { open: vi.fn() }, effect(start: () => () => void) {
+      dispose = start()
+    } })
+    window.dispatchEvent(new MessageEvent('message', { source: host as unknown as Window, origin: 'https://untrusted.example', data: { source: 'dsh-desktop', type: 'dsh://external-workspace:refresh' } }))
+    expect(fetch).not.toHaveBeenCalled()
+    expect(host.postMessage).not.toHaveBeenCalled()
+  })
+
   it('opens an exact session ID through the installed client plugin and removes the opener on unload', () => {
     window.location.href = 'http://127.0.0.1:3182/?dsh-desktop-external=1'
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
@@ -134,14 +146,14 @@ describe('external DSH companion', () => {
     document.body.innerHTML = '<div role="treeitem"><span class="row_title">Same title</span><span>Yesterday</span></div>'
     const click = vi.fn()
     document.querySelector('[role="treeitem"]')!.addEventListener('click', click)
-    dispose = mountExternalWorkspace()
+    dispose = mountExternalWorkspace(undefined, 'http://tauri.localhost')
     const action = { source: 'dsh-desktop', type: 'dsh://external-workspace:open-session', sessionId: 's', sessionTitle: 'Same title' }
     send(action)
     expect(click).toHaveBeenCalledOnce()
     document.body.appendChild(document.body.firstElementChild!.cloneNode(true))
     send(action)
     expect(click).toHaveBeenCalledOnce()
-    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'dsh://external-workspace:open-failed' }), '*')
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'dsh://external-workspace:open-failed' }), 'http://tauri.localhost')
   })
 
   it('uses the external origin, restores layout and stops requests on unload', async () => {
@@ -154,8 +166,8 @@ describe('external DSH companion', () => {
       return { ok: true, json: async () => ({ rpcId: request.rpcId, result: { ok: true, value: { items } } }) }
     })
     vi.stubGlobal('fetch', fetchMock)
-    dispose = mountExternalWorkspace()
-    await vi.waitFor(() => expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ tree: { workspaces: [{ id: 'w', title: 'Remote', sessions: [{ id: 's', title: 'Remote chat' }] }] } }), '*'))
+    dispose = mountExternalWorkspace(undefined, 'http://tauri.localhost')
+    await vi.waitFor(() => expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ tree: { workspaces: [{ id: 'w', title: 'Remote', sessions: [{ id: 's', title: 'Remote chat' }] }] } }), 'http://tauri.localhost'))
     expect(fetchMock.mock.calls.every(([url]) => url.startsWith('http://127.0.0.1:3082/api/'))).toBe(true)
     expect(document.querySelector('aside')?.style.visibility).toBe('hidden')
     const signal = fetchMock.mock.calls[0][1].signal
@@ -176,7 +188,7 @@ describe('external DSH companion', () => {
       await pending
       return { ok: true, json: async () => ({ rpcId: JSON.parse(String(options.body)).rpcId, result: { ok: true, value: { items: [] } } }) }
     }))
-    dispose = mountExternalWorkspace()
+    dispose = mountExternalWorkspace(undefined, 'http://tauri.localhost')
     dispose()
     release()
     await pending

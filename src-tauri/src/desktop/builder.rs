@@ -51,12 +51,6 @@ fn managed_iframe_script(script: &str) -> String {
     )
 }
 
-/// 外部页面无特权内容脚本自行检查 URL 标记；它不共享托管 iframe 的桌面桥。
-#[cfg(not(windows))]
-fn external_iframe_script(script: &str) -> String {
-    format!("(function () {{ {script} }})();")
-}
-
 /// setup app
 pub fn setup(app_handle: tauri::AppHandle) {
     // 升级清理：内部插件资源已迁至 resources/internal-plugins；旧安装可能保留
@@ -461,10 +455,13 @@ pub fn build_main_window(app: &tauri::AppHandle<Wry>) -> tauri::Result<tauri::We
         ))
         .initialization_script_for_all_frames(managed_iframe_script(
             crate::desktop::zoom::ZOOM_SHORTCUT_BRIDGE_JS,
-        ))
-        .initialization_script_for_all_frames(external_iframe_script(
-            crate::desktop::plugin_client::EXTERNAL_CONNECTIONS_ADAPTER,
         ));
+
+    // 外部适配器必须先于 DSH 客户端启动执行，以把随包插件注册到 Cordis。
+    // 脚本仅处理外部 iframe 的 URL 标记，不开放托管页面的 IPC 权限。
+    let webview_builder = webview_builder.initialization_script_for_all_frames(
+        crate::desktop::plugin_client::EXTERNAL_CONNECTIONS_ADAPTER,
+    );
 
     let webview_window = webview_builder.build()?;
     let zoom_factor = crate::config::get_store_dat_setting(app).zoom_factor;

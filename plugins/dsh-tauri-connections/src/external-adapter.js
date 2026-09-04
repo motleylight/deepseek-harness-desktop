@@ -1,3 +1,4 @@
+import { isDesktopMessage } from './desktop-message.js'
 import { mountExternalWorkspace } from './external-workspace.js'
 
 /** A plugin-provided session opener supersedes the dormant DOM-only Desktop companion. */
@@ -9,10 +10,10 @@ export function installExternalAdapter(openById) {
   window.__dshConnectionsAdapter?.()
   let stop = null
   function onMessage(event) {
-    if (event.source !== window.parent || event.data?.source !== 'dsh-desktop')
+    if (!isDesktopMessage(event) || event.data?.source !== 'dsh-desktop')
       return
     if (event.data.type === 'dsh://external-workspace:refresh' && !stop)
-      stop = mountExternalWorkspace(openById)
+      stop = mountExternalWorkspace(openById, event.origin)
   }
   function dispose() {
     stop?.()
