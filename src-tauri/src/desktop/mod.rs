@@ -2,6 +2,7 @@ pub mod activation;
 pub mod autostart;
 pub mod builder;
 pub mod compat;
+pub mod external_workspace;
 pub mod nav;
 pub mod notification;
 pub mod paste;
@@ -9,6 +10,7 @@ pub mod payload;
 pub mod plugin_boot;
 pub mod style;
 pub mod window;
+pub mod workspace_tree;
 pub mod zoom;
 
 pub use builder::{builder, handler, setup, tray};

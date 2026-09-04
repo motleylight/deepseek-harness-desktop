@@ -95,6 +95,9 @@ pub struct Setting {
     /// 用户保存的外部 Harness 连接。缺失时保持空列表，兼容既有 store。
     #[serde(default)]
     pub connections: Vec<DshConnection>,
+    /// 桌面端托管 Harness 在工作区树中的可选显示名称；缺失时由客户端使用本地化默认值。
+    #[serde(default)]
+    pub managed_connection_name: Option<String>,
     /// 已连接并展示在 Desktop 工作区树中的外部 Harness id。
     #[serde(default)]
     pub connected_connection_ids: Vec<String>,
@@ -234,6 +237,10 @@ fn normalize_dsh_connection_name(value: &str) -> Result<String, String> {
 
 /// 清除损坏、重复或过期的连接记录，并归一化工作区的可见与连接选择。
 fn normalize_connections(setting: &mut Setting) {
+    setting.managed_connection_name = setting
+        .managed_connection_name
+        .as_deref()
+        .and_then(|name| normalize_dsh_connection_name(name).ok());
     let mut seen_ids = HashSet::new();
     let mut seen_urls = HashSet::new();
     setting.connections.retain_mut(|connection| {
@@ -274,9 +281,9 @@ fn normalize_connections(setting: &mut Setting) {
         .map(|connection| connection.id.as_str())
         .collect::<HashSet<_>>();
     let mut selected_ids = HashSet::new();
-    setting.connected_connection_ids.retain(|id| {
-        valid_ids.contains(id.as_str()) && selected_ids.insert(id.clone())
-    });
+    setting
+        .connected_connection_ids
+        .retain(|id| valid_ids.contains(id.as_str()) && selected_ids.insert(id.clone()));
 
     if setting.active_connection_id != MANAGED_CONNECTION_ID
         && !setting
@@ -335,6 +342,7 @@ impl Default for Setting {
             backup_retention_count: default_backup_retention_count(),
             backup_include_credentials: false,
             connections: Vec::new(),
+            managed_connection_name: None,
             connected_connection_ids: Vec::new(),
             connection_selection_initialized: true,
             active_connection_id: default_active_connection_id(),
@@ -402,6 +410,7 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.zoom_factor = normalize_zoom_factor(current.zoom_factor);
     replacement.close_action = normalize_close_action(&current.close_action);
     replacement.connections = current.connections.clone();
+    replacement.managed_connection_name = current.managed_connection_name.clone();
     replacement.connected_connection_ids = current.connected_connection_ids.clone();
     replacement.connection_selection_initialized = current.connection_selection_initialized;
     replacement.active_connection_id = current.active_connection_id.clone();
@@ -547,6 +556,17 @@ pub fn update_dsh_connection(
     Ok(updated)
 }
 
+/// 更新桌面端托管 Harness 的工作区树显示名称。
+pub fn rename_managed_dsh_connection(
+    app_handle: &AppHandle,
+    name: String,
+) -> Result<Setting, String> {
+    let name = normalize_dsh_connection_name(&name)?;
+    Ok(update_store_dat_setting(app_handle, |setting| {
+        setting.managed_connection_name = Some(name);
+    }))
+}
+
 /// 设置一个外部 Harness 是否作为并行工作区保持连接。
 pub fn set_dsh_connection_connected(
     app_handle: &AppHandle,
@@ -563,7 +583,11 @@ pub fn set_dsh_connection_connected(
     }
     Ok(update_store_dat_setting(app_handle, |setting| {
         if connected {
-            if !setting.connected_connection_ids.iter().any(|item| item == &id) {
+            if !setting
+                .connected_connection_ids
+                .iter()
+                .any(|item| item == &id)
+            {
                 setting.connected_connection_ids.push(id);
             }
         } else {
@@ -584,7 +608,9 @@ pub fn select_dsh_connection(app_handle: &AppHandle, id: String) -> Result<Setti
             .iter()
             .any(|connection_id| connection_id == &id)
     {
-        return Err("CONNECTION_NOT_CONNECTED: the selected connection is not connected".to_string());
+        return Err(
+            "CONNECTION_NOT_CONNECTED: the selected connection is not connected".to_string(),
+        );
     }
     Ok(update_store_dat_setting(app_handle, |setting| {
         setting.active_connection_id = id;
@@ -603,7 +629,9 @@ pub fn remove_dsh_connection(app_handle: &AppHandle, id: String) -> Result<Setti
     }
     Ok(update_store_dat_setting(app_handle, |setting| {
         setting.connections.retain(|connection| connection.id != id);
-        setting.connected_connection_ids.retain(|connection_id| connection_id != &id);
+        setting
+            .connected_connection_ids
+            .retain(|connection_id| connection_id != &id);
         if setting.active_connection_id == id {
             setting.active_connection_id = default_active_connection_id();
         }
@@ -637,9 +665,8 @@ pub fn set_dsh_pkg_tag(app_handle: &AppHandle, tag: String) {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_close_action, default_zoom_factor, normalize_close_action,
-        normalize_connections, normalize_dsh_connection_url, normalize_zoom_factor,
-        preserve_persisted_fields,
+        default_close_action, default_zoom_factor, normalize_close_action, normalize_connections,
+        normalize_dsh_connection_url, normalize_zoom_factor, preserve_persisted_fields,
         DshConnection, Setting, MANAGED_CONNECTION_ID, ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN,
     };
 
@@ -819,6 +846,7 @@ mod tests {
         }];
         current.active_connection_id = "external-1".to_string();
         current.connected_connection_ids = vec!["external-1".to_string()];
+        current.managed_connection_name = Some("Development".to_string());
         current.next_connection_id = 2;
 
         let merged = preserve_persisted_fields(stale, &current);
@@ -826,7 +854,26 @@ mod tests {
         assert_eq!(merged.connections.len(), 1);
         assert_eq!(merged.connected_connection_ids, ["external-1"]);
         assert_eq!(merged.active_connection_id, "external-1");
+        assert_eq!(
+            merged.managed_connection_name.as_deref(),
+            Some("Development")
+        );
         assert_eq!(merged.next_connection_id, 2);
+    }
+
+    #[test]
+    fn managed_connection_name_is_normalized_with_external_names() {
+        let mut setting = Setting {
+            managed_connection_name: Some("  Development  ".to_string()),
+            ..Default::default()
+        };
+
+        normalize_connections(&mut setting);
+
+        assert_eq!(
+            setting.managed_connection_name.as_deref(),
+            Some("Development")
+        );
     }
 
     #[test]

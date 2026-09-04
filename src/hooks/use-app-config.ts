@@ -22,6 +22,7 @@ export interface AppConfig {
   backup_retention_count: number
   backup_include_credentials: boolean
   connections: DshConnection[]
+  managed_connection_name: string | null
   connected_connection_ids: string[]
   active_connection_id: string
 }

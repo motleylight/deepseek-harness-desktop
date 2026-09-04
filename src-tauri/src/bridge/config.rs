@@ -133,6 +133,17 @@ pub async fn update_dsh_connection(
     Ok(setting)
 }
 
+/// 更新桌面端托管 Harness 在工作区树中的显示名称。
+#[tauri::command]
+pub async fn rename_managed_dsh_connection(
+    app_handle: AppHandle,
+    name: String,
+) -> Result<config::Setting, String> {
+    let setting = config::rename_managed_dsh_connection(&app_handle, name)?;
+    crate::service::backup::schedule::mark_config_changed(&app_handle);
+    Ok(setting)
+}
+
 /// 设置一个外部 Harness 是否作为并行工作区保持连接。
 #[tauri::command]
 pub async fn set_dsh_connection_connected(

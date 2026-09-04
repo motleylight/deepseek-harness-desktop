@@ -45,6 +45,10 @@ export function ConnectionDialog(props: ConnectionDialogProps) {
     setSaving(true)
     setError('')
     try {
+      const editingConnection = connections.find(connection => connection.id === editingId)
+      if (!editingConnection || editingConnection.url !== url.trim()) {
+        await invoke('probe_dsh_connection', { url })
+      }
       const updatedConfig = editingId
         ? await invoke<AppConfig>('update_dsh_connection', { id: editingId, name, url })
         : await invoke<AppConfig>('add_dsh_connection', { name, url })

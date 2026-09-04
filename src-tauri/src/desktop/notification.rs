@@ -159,20 +159,19 @@ pub fn enable_notification_permissions(
     webview: tauri::webview::PlatformWebview,
     parent: tauri::WebviewWindow<tauri::Wry>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
     use rfd::{MessageButtons, MessageDialog, MessageDialogResult};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
     use webview2_com::{
         ExecuteScriptCompletedHandler, FrameContentLoadingEventHandler, FrameCreatedEventHandler,
         FrameNavigationStartingEventHandler, FramePermissionRequestedEventHandler,
         Microsoft::Web::WebView2::Win32::{
-            ICoreWebView2Frame2, ICoreWebView2Frame3,
-            ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2Profile4, ICoreWebView2_13,
-            ICoreWebView2_4,
-            COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_AUTOPLAY,
-            COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
+            ICoreWebView2Frame2, ICoreWebView2Frame3, ICoreWebView2PermissionRequestedEventArgs,
+            ICoreWebView2Profile4, ICoreWebView2_13, ICoreWebView2_4, COREWEBVIEW2_PERMISSION_KIND,
+            COREWEBVIEW2_PERMISSION_KIND_AUTOPLAY, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+            COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
             COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE, COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
             COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
             COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES,
@@ -397,6 +396,13 @@ pub fn enable_notification_permissions(
         let _ = frame3.add_ContentLoading(
             &FrameContentLoadingEventHandler::create(Box::new(move |_, _| {
                 if !managed_for_injection.load(Ordering::SeqCst) {
+                    let script = HSTRING::from(
+                        crate::desktop::external_workspace::EXTERNAL_WORKSPACE_BRIDGE_JS,
+                    );
+                    let _ = frame_for_injection.ExecuteScript(
+                        &script,
+                        &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))),
+                    );
                     return Ok(());
                 }
                 // 通知桥、导航桥、样式桥、剪贴板图片桥与缩放快捷键桥需要 iframe 上下文执行。
@@ -404,6 +410,7 @@ pub fn enable_notification_permissions(
                     crate::desktop::notification::NOTIFICATION_SHIM_JS,
                     crate::desktop::nav::NAV_SHIM_JS,
                     crate::desktop::style::IFRAME_STYLES_JS,
+                    crate::desktop::workspace_tree::WORKSPACE_TREE_BRIDGE_JS,
                     crate::desktop::paste::PASTE_SHIM_JS,
                     crate::desktop::plugin_boot::PLUGIN_BOOT_RELOAD_JS,
                     crate::desktop::zoom::ZOOM_SHORTCUT_BRIDGE_JS,
