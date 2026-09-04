@@ -3,12 +3,16 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { apply } from '../plugins/dsh-tauri-connections/src/client.js'
+import { apply as applyPlugin } from '../plugins/dsh-tauri-connections/src/client.js'
 import { mountExternalWorkspace } from '../plugins/dsh-tauri-connections/src/external-workspace.js'
 
 const host = { postMessage: vi.fn() }
 let dispose: (() => void) | undefined
 const pendingStore = { getSnapshot: () => ({ phase: 'pending' }), subscribe: () => () => {} }
+const baseContext = { sessions: { list: pendingStore }, workspaces: { list: pendingStore }, connection: { hostDescription: pendingStore } }
+function apply(ctx: Parameters<typeof applyPlugin>[0]) {
+  applyPlugin({ ...baseContext, ...ctx })
+}
 
 function send(data: unknown, source: unknown = host) {
   window.dispatchEvent(new MessageEvent('message', { source: source as Window, origin: 'http://tauri.localhost', data }))
@@ -20,7 +24,7 @@ function state(name = 'Development') {
     connections: [{ id: 'external-1', name: 'Another DSH', url: 'http://127.0.0.1:3082' }],
     selectedConnectionId: 'managed-local',
     trees: { 'external-1': { workspaces: [{ id: 'same-id', title: 'Remote workspace', sessions: [{ id: 'same-session-id', title: 'Remote session' }] }] } },
-    labels: { rename: 'Rename', copyAddress: 'Copy address', editAddress: 'Edit address', disconnect: 'Disconnect', delete: 'Delete', cancel: 'Cancel' },
+    labels: { newSession: 'New session', newWorkspace: 'New workspace', connectionBadge: 'Connection: {name}', workspaceBadge: 'Workspace: {name}', rename: 'Rename', copyAddress: 'Copy address', editAddress: 'Edit address', disconnect: 'Disconnect', delete: 'Delete', cancel: 'Cancel' },
   } }
 }
 
@@ -69,14 +73,19 @@ describe('connection plugin lifecycle and workspace routing', () => {
       dispose = start()
     } })
     const message = state()
-    Object.assign(message.state.labels, { toolbar: { 'new-session': 'Choose target', 'search': 'All search', 'add-workspace': 'Choose DSH', 'view': 'All view' } })
+    Object.assign(message.state.labels, { toolbar: { 'new-session': 'New session · Development', 'search': 'All search', 'add-workspace': 'Add workspace · Development', 'view': 'All view' } })
     send(message)
     await vi.advanceTimersByTimeAsync(220)
     buttons.forEach(button => button.click())
-    expect(native[0]).not.toHaveBeenCalled()
+    expect(native[0]).toHaveBeenCalledOnce()
     expect(native[1]).not.toHaveBeenCalled()
     expect(native[2]).toHaveBeenCalledOnce()
     expect(native[3]).not.toHaveBeenCalled()
+    expect(host.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'dsh://workspace-tree:toolbar', action: 'new-session' }), 'http://tauri.localhost')
+    message.state.selectedConnectionId = 'external-1'
+    send(message)
+    buttons[0].click()
+    expect(native[0]).toHaveBeenCalledOnce()
     expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'dsh://workspace-tree:toolbar', action: 'new-session' }), 'http://tauri.localhost')
     localStorage.setItem('dsh.workspace.view.v5', JSON.stringify({ groupBy: 'flat', orderBy: 'updated' }))
     await vi.advanceTimersByTimeAsync(220)
@@ -111,6 +120,48 @@ describe('connection plugin lifecycle and workspace routing', () => {
     expect(late.parentElement).toBe(tree)
   })
 
+  it('keeps row creation scoped to its own connection and workspace rather than the selected toolbar target', async () => {
+    apply({ effect(start: () => () => void) { dispose = start() } })
+    const message = state()
+    Object.assign(message.state.labels, { toolbar: { 'new-session': 'New session · Development', 'add-workspace': 'Add workspace · Development' } })
+    send(message)
+    await new Promise(resolve => setTimeout(resolve, 220))
+    const workspace = document.querySelector('[data-depth="workspace"]')!
+    ;(workspace.querySelector('button') as HTMLButtonElement).click()
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'new-session', connectionId: 'external-1', workspaceId: 'same-id' }), 'http://tauri.localhost')
+    expect(host.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'dsh://workspace-tree:toolbar', action: 'new-session' }), 'http://tauri.localhost')
+    const connection = document.querySelector('[data-connection-id="external-1"]')!
+    ;(connection.querySelector('button') as HTMLButtonElement).click()
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'add-workspace', connectionId: 'external-1' }), 'http://tauri.localhost')
+  })
+
+  it('merges every connection in flat view, labels row ownership, and preserves row menus', async () => {
+    const managed = { phase: 'ready', items: [{ workspaceId: 'same-id', title: 'Local workspace', path: '/local', sessionIds: ['same-session-id'] }], archivedSessionIds: [] }
+    const sessions = { phase: 'ready', ids: ['same-session-id'], current: 'same-session-id', byId: { 'same-session-id': { displayTitle: 'Local session', updatedAt: 3, running: true } } }
+    const source = (snapshot: unknown) => ({ getSnapshot: () => snapshot, subscribe: () => () => {} })
+    apply({ sessions: { list: source(sessions) }, workspaces: { list: source(managed) }, effect(start: () => () => void) { dispose = start() } })
+    const message = state()
+    Object.assign(message.state.labels, { renameSession: 'Rename session', forkSession: 'Fork session', archiveSession: 'Archive session', running: 'Running', completed: 'Completed' })
+    send(message)
+    localStorage.setItem('dsh.workspace.view.v5', JSON.stringify({ groupBy: 'flat', orderBy: 'updated' }))
+    await vi.waitFor(() => expect(document.querySelector('[data-connection-id]')).toBeNull())
+    const rows = document.querySelectorAll('[data-session-key]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].getAttribute('data-session-key')).toBe('["managed-local","same-session-id"]')
+    expect(rows[0].querySelector('[data-status="running"]')).not.toBeNull()
+    expect(rows[0].querySelectorAll('.dsh-desktop-badge')).toHaveLength(2)
+    const badges = rows[1].querySelectorAll('.dsh-desktop-badge')
+    ;(badges[1] as HTMLElement).click()
+    ;(document.querySelector('[role="menuitem"]') as HTMLElement).click()
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'new-session', connectionId: 'external-1', workspaceId: 'same-id' }), 'http://tauri.localhost')
+    rows[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    expect(document.querySelector('[role="menu"]')?.textContent).toBe('Rename sessionFork sessionArchive session')
+    localStorage.setItem('dsh.workspace.view.v5', JSON.stringify({ groupBy: 'workspace' }))
+    await vi.waitFor(() => expect(document.querySelector('[data-connection-id]')).not.toBeNull())
+    expect(document.querySelector('[role="tree"]')?.getAttribute('data-dsh-desktop-flat')).toBe('false')
+    localStorage.clear()
+  })
+
   it('uses folder disclosures and native-size rows, preserves keyboard focus, and scopes workspace expansion to its connection', () => {
     apply({ effect(start: () => () => void) {
       dispose = start()
@@ -122,7 +173,7 @@ describe('connection plugin lifecycle and workspace routing', () => {
     const connection = document.querySelector('[data-connection-id="managed-local"]')!
     expect(connection.textContent).toBe('Development')
     expect(connection.getAttribute('title')).toContain('http://127.0.0.1:3081')
-    expect(connection.querySelectorAll('svg')).toHaveLength(2)
+    expect(connection.querySelectorAll('svg')).toHaveLength(3)
     const styles = document.getElementById('dsh-desktop-workspace-tree-styles')!.textContent
     expect(styles).toContain('font-size:14px;line-height:20px')
     expect(styles).toContain('height:32px;gap:0')
@@ -198,7 +249,7 @@ describe('connection plugin lifecycle and workspace routing', () => {
   it('loads the packaged client through the real DSH module-loader entry', () => {
     const load = vi.fn(({ factory }: { factory: () => { apply: typeof apply } }) => {
       const plugin = factory()
-      plugin.apply({ effect(start: () => () => void) {
+      plugin.apply({ ...baseContext, effect(start: () => () => void) {
         dispose = start()
       } })
     })
@@ -235,7 +286,7 @@ describe('external DSH companion', () => {
     expect(host.postMessage).not.toHaveBeenCalled()
     workspaces.phase = 'ready'
     subscriptions[0]()
-    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ tree: { workspaces: [{ id: 'w', title: 'Linux', sessions: [{ id: 'live', title: 'Live title' }] }] } }), 'http://tauri.localhost')
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ tree: expect.objectContaining({ workspaces: [expect.objectContaining({ id: 'w', title: 'Linux', sessions: [expect.objectContaining({ id: 'live', title: 'Live title' })] })] }) }), 'http://tauri.localhost')
     expect(fetch).not.toHaveBeenCalled()
     send({ source: 'dsh-desktop', type: 'dsh://external-workspace:open-session', sessionId: 'live', sessionTitle: 'Live title' })
     expect(open).toHaveBeenCalledWith('live')
@@ -296,7 +347,7 @@ describe('external DSH companion', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     dispose = mountExternalWorkspace(undefined, 'http://tauri.localhost')
-    await vi.waitFor(() => expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ tree: { workspaces: [{ id: 'w', title: 'Remote', sessions: [{ id: 's', title: 'Remote chat' }] }] } }), 'http://tauri.localhost'))
+    await vi.waitFor(() => expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ tree: expect.objectContaining({ workspaces: [expect.objectContaining({ id: 'w', title: 'Remote', sessions: [expect.objectContaining({ id: 's', title: 'Remote chat' })] })] }) }), 'http://tauri.localhost'))
     expect(fetchMock.mock.calls.every(([url]) => url.startsWith('http://127.0.0.1:3082/api/'))).toBe(true)
     expect(document.querySelector('aside')?.style.visibility).toBe('hidden')
     const signal = fetchMock.mock.calls[0][1].signal

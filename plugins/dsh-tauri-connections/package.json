@@ -1,7 +1,7 @@
 {
   "name": "dsh-tauri-connections",
   "type": "module",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Concurrent DSH connections, workspace groups and desktop connection settings.",
   "license": "MIT",
   "repository": "github:motleylight/deepseek-harness-desktop",

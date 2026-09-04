@@ -3,6 +3,7 @@ import type { RefObject } from 'react'
 import type { ConnectionsConfig, DshConnection } from './types'
 import type { WorkspaceAction } from './workspace-actions'
 import type { WorkspaceSnapshot } from './workspace-client'
+import type { WorkspaceItemAction } from './workspace-item-dialog'
 import { CircleExclamation } from '@gravity-ui/icons'
 import { Button } from '@heroui/react'
 import { invoke } from '@tauri-apps/api/core'
@@ -14,6 +15,7 @@ import { useConnectionHost } from './host'
 import { ConnectionLoading as Loadable } from './loading'
 import { WorkspaceActions } from './workspace-actions'
 import { createWorkspaceClient, parseSnapshot } from './workspace-client'
+import { WorkspaceItemDialog } from './workspace-item-dialog'
 
 export const MANAGED_CONNECTION_ID = 'managed-local'
 
@@ -36,6 +38,8 @@ interface WorkspaceTreeAction {
   url?: string
   sessionId?: string
   sessionTitle?: string
+  workspaceId?: string
+  workspaceTitle?: string
 }
 
 interface DshWorkspaceMessage extends WorkspaceTreeAction {
@@ -206,6 +210,9 @@ export function DshWorkspaces({
   const [externalTrees, setExternalTrees] = useState<Record<string, WorkspaceTree>>({})
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [toolbarAction, setToolbarAction] = useState<WorkspaceAction | null>(null)
+  const [toolbarConnectionId, setToolbarConnectionId] = useState(MANAGED_CONNECTION_ID)
+  const [toolbarError, setToolbarError] = useState('')
+  const [itemAction, setItemAction] = useState<WorkspaceItemAction | null>(null)
   const connectedConnections = config?.connections.filter(connection => (
     config.connected_connection_ids.includes(connection.id)
   )) ?? []
@@ -270,12 +277,30 @@ export function DshWorkspaces({
         trees: externalTrees,
         labels: {
           toolbar: {
-            'new-session': t('workspace.new_session_scope'),
-            'add-workspace': t('workspace.add_workspace_scope'),
+            'new-session': t('workspace.new_session_scope', { name: selectedConnectionId === MANAGED_CONNECTION_ID ? managedName : connectedConnections.find(item => item.id === selectedConnectionId)?.name || '' }),
+            'add-workspace': t('workspace.add_workspace_scope', { name: selectedConnectionId === MANAGED_CONNECTION_ID ? managedName : connectedConnections.find(item => item.id === selectedConnectionId)?.name || '' }),
             'search': t('workspace.search'),
             'view': t('workspace.view_scope'),
           },
           rename: t('connections.rename'),
+          newSession: t('workspace.new-session'),
+          newWorkspace: t('workspace.new_workspace'),
+          running: t('workspace.running'),
+          completed: t('workspace.completed'),
+          renameWorkspace: t('workspace.rename-workspace'),
+          deleteWorkspace: t('workspace.delete-workspace'),
+          renameSession: t('workspace.rename-session'),
+          forkSession: t('workspace.fork-session'),
+          archiveSession: t('workspace.archive-session'),
+          sessionActions: t('workspace.session_actions'),
+          copyPath: t('workspace.copy_path'),
+          copySessionId: t('workspace.copy_session_id'),
+          openPath: t('workspace.open_path'),
+          archiveWorkspace: t('workspace.archive-workspace'),
+          refresh: t('workspace.refresh'),
+          connectionBadge: t('workspace.connection_badge'),
+          workspaceBadge: t('workspace.workspace_badge'),
+          ungrouped: t('workspace.ungrouped'),
           copyAddress: t('connections.copy_address'),
           editAddress: t('connections.edit_address'),
           disconnect: t('connections.disconnect'),
@@ -323,10 +348,49 @@ export function DshWorkspaces({
         selectionSequence.current++
         onSelectConnection(connectionId)
       }
-      else if (action === 'open-session' && connection && typeof message.sessionTitle === 'string') {
+      else if (action === 'open-session' && (connection || connectionId === MANAGED_CONNECTION_ID) && typeof message.sessionTitle === 'string') {
         const sequence = ++selectionSequence.current
         await workspaceClient.request(connectionId, 'open-session', { sessionId: message.sessionId || '' })
         if (selectionSequence.current === sequence)
+          onSelectConnection(connectionId)
+      }
+      else if (action === 'new-session' && (connection || connectionId === MANAGED_CONNECTION_ID) && typeof message.workspaceId === 'string') {
+        const sequence = ++selectionSequence.current
+        await workspaceClient.request(connectionId, 'new-session', { workspaceId: message.workspaceId })
+        if (selectionSequence.current === sequence)
+          onSelectConnection(connectionId)
+      }
+      else if (action === 'add-workspace' && (connection || connectionId === MANAGED_CONNECTION_ID)) {
+        setToolbarConnectionId(connectionId)
+        setToolbarAction('add-workspace')
+      }
+      else if (['rename-workspace', 'delete-workspace', 'rename-session', 'archive-workspace'].includes(action) && (connection || connectionId === MANAGED_CONNECTION_ID)) {
+        const target = connection || { id: MANAGED_CONNECTION_ID, name: managedName, url: managedServiceUrl }
+        const id = action === 'rename-session' ? message.sessionId : message.workspaceId
+        const title = action === 'rename-session' ? message.sessionTitle : message.workspaceTitle
+        if (typeof id !== 'string' || typeof title !== 'string')
+          throw new Error('WORKSPACE_ACTION_INVALID')
+        setItemAction({ command: action as WorkspaceItemAction['command'], connection: target, id, title })
+      }
+      else if ((action === 'copy-path' || action === 'open-item-path') && (connection || connectionId === MANAGED_CONNECTION_ID)) {
+        const { path } = await workspaceClient.request(connectionId, action === 'copy-path' ? 'item-path' : 'open-item-path', { workspaceId: message.workspaceId, sessionId: message.sessionId })
+        if (action === 'copy-path')
+          await copyText(path)
+      }
+      else if (action === 'copy-session-id' && typeof message.sessionId === 'string' && (connection || connectionId === MANAGED_CONNECTION_ID)) {
+        await copyText(message.sessionId)
+      }
+      else if (action === 'refresh' && (connection || connectionId === MANAGED_CONNECTION_ID)) {
+        const frame = connectionId === MANAGED_CONNECTION_ID ? managedIframeRef.current : externalFramesRef.current[connectionId]
+        if (frame) {
+          workspaceClient.invalidate(connectionId)
+          frame.setAttribute('src', frame.src)
+        }
+      }
+      else if ((action === 'fork-session' || action === 'archive-session') && (connection || connectionId === MANAGED_CONNECTION_ID) && typeof message.sessionId === 'string') {
+        const sequence = ++selectionSequence.current
+        await workspaceClient.request(connectionId, action, { sessionId: message.sessionId })
+        if (action === 'fork-session' && sequence === selectionSequence.current)
           onSelectConnection(connectionId)
       }
       else if (action === 'request-rename' || action === 'request-edit' || action === 'request-delete') {
@@ -383,8 +447,19 @@ export function DshWorkspaces({
       else if (data.type === 'dsh://workspace-tree:action') {
         void handleWorkspaceTreeAction(data)
       }
-      else if (data.type === 'dsh://workspace-tree:toolbar' && (data.action === 'new-session' || data.action === 'add-workspace' || data.action === 'search')) {
-        setToolbarAction(data.action)
+      else if (data.type === 'dsh://workspace-tree:toolbar') {
+        if (data.action === 'new-session') {
+          selectionSequence.current++
+          const name = selectedConnectionId === MANAGED_CONNECTION_ID ? managedName : connectedConnections.find(item => item.id === selectedConnectionId)?.name || ''
+          setToolbarError('')
+          void workspaceClient.request(selectedConnectionId, 'start-session', {}).catch(() => {
+            setToolbarError(t('workspace.start_failed', { name }))
+          })
+        }
+        else if (data.action === 'add-workspace' || data.action === 'search') {
+          setToolbarConnectionId(selectedConnectionId)
+          setToolbarAction(data.action)
+        }
       }
       return
     }
@@ -456,8 +531,17 @@ export function DshWorkspaces({
 
   return (
     <div className="relative min-h-0 flex-1">
+      <If cond={itemAction !== null}>
+        <WorkspaceItemDialog action={itemAction!} available={itemAction?.connection.id === MANAGED_CONNECTION_ID ? itemAction.connection.url === managedServiceUrl && managedHealthy : connectedConnections.some(connection => connection.id === itemAction?.connection.id && connection.url === itemAction?.connection.url)} request={workspaceClient.request} onClose={() => setItemAction(null)} />
+      </If>
+      <If cond={Boolean(toolbarError)}>
+        <div role="alert" className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-canvas p-3 text-sm text-danger">
+          <span className="flex-1">{toolbarError}</span>
+          <Button size="sm" variant="ghost" onPress={() => setToolbarError('')}>{t('workspace.dismiss')}</Button>
+        </div>
+      </If>
       <If cond={toolbarAction !== null}>
-        <WorkspaceActions key={toolbarAction} action={toolbarAction!} connections={[{ id: MANAGED_CONNECTION_ID, name: managedName, url: managedServiceUrl }, ...connectedConnections]} request={workspaceClient.request} onSelect={onSelectConnection} onClose={() => setToolbarAction(null)} />
+        <WorkspaceActions key={`${toolbarAction}:${toolbarConnectionId}`} action={toolbarAction!} connections={[{ id: MANAGED_CONNECTION_ID, name: managedName, url: managedServiceUrl }, ...connectedConnections].filter(connection => toolbarAction === 'search' || connection.id === toolbarConnectionId)} request={workspaceClient.request} onSelect={onSelectConnection} onClose={() => setToolbarAction(null)} />
       </If>
       <If cond={managedHealthy} else={<Loadable subtitle={t('connections.managed_connecting')} />}>
         <iframe

@@ -1,8 +1,10 @@
-/** Retains the native buttons and menu; routes creation/search through Desktop's endpoint picker. */
-export function mountWorkspaceToolbar(getLabels, dispatch, onViewChange) {
+/** Keeps native local creation and view controls; routes actions targeting other connections. */
+export function mountWorkspaceToolbar(getLabels, dispatch, onViewChange, isManagedSelected) {
   const originals = new Map()
   let previousView = ''
   function actionOf(button) {
+    if (button.closest('[role="tree"], [role="menu"]'))
+      return
     if (button.matches('.dshp-newSession, .dshp-brand'))
       return 'new-session'
     const label = originals.get(button)?.aria ?? button.getAttribute('aria-label')
@@ -52,6 +54,10 @@ export function mountWorkspaceToolbar(getLabels, dispatch, onViewChange) {
     const action = actionOf(button)
     if (!action || action === 'view')
       return
+    if (action === 'new-session' && isManagedSelected()) {
+      dispatch('select-managed')
+      return
+    }
     event.preventDefault()
     event.stopImmediatePropagation()
     dispatch(action)

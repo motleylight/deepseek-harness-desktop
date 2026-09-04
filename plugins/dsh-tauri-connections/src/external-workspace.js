@@ -98,15 +98,22 @@ export function mountExternalWorkspace(openById, parentOrigin, stores) {
           id: String(session.sessionId),
           title: titleOf(session),
           updatedAt: session.updatedAt,
+          running: (stores ? stores.sessions.getSnapshot().byId[String(session.sessionId)]?.running : session.running) === true,
+          completed: stores?.sessions.getSnapshot().byId[String(session.sessionId)]?.completed === true,
+          blank: stores?.sessions.getSnapshot().byId[String(session.sessionId)]?.blank === true,
+          subagent: stores?.sessions.getSnapshot().byId[String(session.sessionId)]?.origin === 'subagent',
         }]
       }))
       const workspaces = Array.isArray(workspaceList.items) ? workspaceList.items : []
+      const assigned = new Set(workspaces.flatMap(workspace => workspace.sessionIds || []).map(String))
       if (disposed)
         return
       post({
         type: 'dsh://external-workspace:tree',
         tree: {
           version: stores?.host?.getSnapshot()?.version,
+          currentSessionId: stores?.sessions.getSnapshot().current,
+          unassigned: Array.from(sessionMap.values()).filter(session => !assigned.has(session.id)),
           workspaces: workspaces.slice(0, 100).map((workspace) => {
             const ids = Array.isArray(workspace.sessionIds) ? workspace.sessionIds : []
             return {

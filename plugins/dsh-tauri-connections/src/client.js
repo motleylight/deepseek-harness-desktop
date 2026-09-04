@@ -15,7 +15,7 @@ export function apply(ctx) {
   ctx.effect(() => {
     const stopCommands = mountWorkspaceCommands(ctx)
     const stopView = query.get('dsh-desktop-managed') === '1'
-      ? mountWorkspaceTree()
+      ? mountWorkspaceTree(ctx)
       : installExternalAdapter(id => ctx.sessions.open(id), { sessions: ctx.sessions.list, workspaces: ctx.workspaces.list, host: ctx.connection.hostDescription })
     return () => {
       stopCommands()

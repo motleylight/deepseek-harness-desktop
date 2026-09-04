@@ -1,36 +1,41 @@
 import { isDesktopMessage } from './desktop-message.js'
+import { readWorkspaceSnapshot } from './workspace-snapshot.js'
 
 /** Commands run in the selected DSH's own client; no cross-origin API or filesystem access. */
 export function mountWorkspaceCommands(ctx) {
   const pending = new Map()
   let disposed = false
   function snapshot() {
-    const workspaces = ctx.workspaces.list.getSnapshot()
-    const sessions = ctx.sessions.list.getSnapshot()
-    if (workspaces.phase !== 'ready' || sessions.phase !== 'ready')
-      throw new Error('DSH_NOT_READY')
-    if (workspaces.error)
-      throw new Error(workspaces.error.message)
-    const archived = new Set(workspaces.archivedSessionIds)
-    return {
-      version: ctx.connection.hostDescription?.getSnapshot()?.version,
-      workspaces: workspaces.items.map(workspace => ({
-        id: workspace.workspaceId,
-        title: workspace.title || workspace.path,
-        path: workspace.path,
-        sessions: workspace.sessionIds.filter(id => sessions.byId[id] && !archived.has(id)).map(id => ({
-          id,
-          title: sessions.byId[id].displayTitle,
-          updatedAt: sessions.byId[id].updatedAt,
-        })),
-      })),
-    }
+    return readWorkspaceSnapshot(ctx)
   }
   async function run(command, args, signal) {
     // Alpha separates UI navigation from the Workspace Controller; rc.2 combines them.
     const navigation = (typeof ctx.get === 'function' ? ctx.get('uiWorkspace') : undefined) ?? ctx.workspaces
     if (command === 'snapshot')
       return snapshot()
+    if (command === 'start-session') {
+      navigation.startSession()
+      return {}
+    }
+    if ((command === 'item-path' || command === 'open-item-path') && (typeof args.workspaceId === 'string' || typeof args.sessionId === 'string')) {
+      const tree = snapshot()
+      const workspace = tree.workspaces.find(workspace => workspace.id === args.workspaceId)
+      const session = ctx.sessions.list.getSnapshot().byId[args.sessionId]
+      const path = typeof args.workspaceId === 'string' ? workspace?.path : session?.cwd
+      if (typeof path !== 'string' || !path)
+        throw new Error('DSH_PATH_UNAVAILABLE')
+      if (command === 'open-item-path')
+        await navigation.openPath(path)
+      return { path }
+    }
+    if (command === 'archive-workspace' && typeof args.workspaceId === 'string') {
+      const workspace = snapshot().workspaces.find(workspace => workspace.id === args.workspaceId)
+      if (!workspace)
+        throw new Error('WORKSPACE_NOT_FOUND')
+      for (const session of workspace.sessions.filter(session => !session.blank && !session.subagent))
+        await navigation.archiveSession(session.id)
+      return {}
+    }
     if (command === 'search' && typeof args.query === 'string') {
       const tree = snapshot()
       let contentResult = { items: [], hasMore: false }
@@ -69,8 +74,39 @@ export function mountWorkspaceCommands(ctx) {
       ctx.sessions.open(id)
       return { id }
     }
+    if (['rename-workspace', 'delete-workspace'].includes(command) && typeof args.workspaceId === 'string') {
+      if (!snapshot().workspaces.some(workspace => workspace.id === args.workspaceId))
+        throw new Error('WORKSPACE_NOT_FOUND')
+      if (command === 'delete-workspace')
+        await ctx.workspaces.delete(args.workspaceId)
+      else if (typeof args.title === 'string' && args.title.trim())
+        await ctx.workspaces.rename(args.workspaceId, args.title.trim())
+      else throw new Error('WORKSPACE_TITLE_REQUIRED')
+      return {}
+    }
+    if (['rename-session', 'fork-session', 'archive-session'].includes(command) && typeof args.sessionId === 'string') {
+      const tree = snapshot()
+      if (![...tree.unassigned, ...tree.workspaces.flatMap(workspace => workspace.sessions)].some(session => session.id === args.sessionId))
+        throw new Error('SESSION_NOT_FOUND')
+      if (command === 'archive-session') {
+        await navigation.archiveSession(args.sessionId)
+      }
+      else if (command === 'fork-session') {
+        const id = await ctx.sessions.fork({ sessionId: args.sessionId, increaseTitle: true })
+        ctx.sessions.open(id)
+      }
+      else {
+        if (typeof args.title !== 'string' || !args.title.trim())
+          throw new Error('SESSION_TITLE_REQUIRED')
+        const result = await ctx.sessions.binding(args.sessionId).session.rename(args.title.trim())
+        if (!result.ok)
+          throw new Error(result.error.message)
+      }
+      return {}
+    }
     if (command === 'open-session' && typeof args.sessionId === 'string') {
-      if (!snapshot().workspaces.some(workspace => workspace.sessions.some(session => session.id === args.sessionId)))
+      const tree = snapshot()
+      if (![...tree.unassigned, ...tree.workspaces.flatMap(workspace => workspace.sessions)].some(session => session.id === args.sessionId))
         throw new Error('SESSION_NOT_FOUND')
       ctx.sessions.open(args.sessionId)
       return {}

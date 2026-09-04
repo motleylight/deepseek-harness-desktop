@@ -43,19 +43,20 @@ async function click(element: HTMLElement) {
 }
 
 describe('connection editor and settings', () => {
-  it('opens each production toolbar dialog without replacing the application, and requires an explicit create target', async () => {
+  it('opens scoped directory and search dialogs without a connection or workspace picker', async () => {
     const request = vi.fn()
-    for (const action of ['new-session', 'add-workspace', 'search'] as const) {
+    for (const action of ['add-workspace', 'search'] as const) {
       await act(async () => root.render(
         <DshConnectionsProvider host={host}>
           <p>Application remains mounted</p>
-          <WorkspaceActions key={action} action={action} connections={connections} request={request} onSelect={vi.fn()} onClose={vi.fn()} />
+          <WorkspaceActions key={action} action={action} connections={action === 'search' ? connections : [connections[1]]} request={request} onSelect={vi.fn()} onClose={vi.fn()} />
         </DshConnectionsProvider>,
       ))
       expect(document.querySelector('[role="dialog"]')).not.toBeNull()
       expect(container.textContent).toContain('Application remains mounted')
       if (action !== 'search')
-        expect(button(action === 'new-session' ? 'New session' : 'Add workspace').disabled).toBe(true)
+        expect(button('New workspace').disabled).toBe(true)
+      expect(document.querySelector('[role="combobox"]')).toBeNull()
     }
     expect(request).not.toHaveBeenCalled()
   })
@@ -123,6 +124,27 @@ describe('connection editor and settings', () => {
 })
 
 describe('parallel frames', () => {
+  it('routes the toolbar to the active frame without a picker and row creation to its own connection', async () => {
+    const ref = createRef<HTMLIFrameElement>()
+    await act(async () => root.render(<DshConnectionsProvider host={host}><DshWorkspaces config={config} selectedConnectionId="a" onSelectConnection={vi.fn()} managedIframeRef={ref} managedIframeSrc="http://127.0.0.1:3181/?dsh-desktop-managed=1" managedIframeKey={0} managedHealthy managedIframeError={false} managedServiceUrl={host.serviceUrl} onManagedIframeLoad={() => {}} onManagedIframeError={() => {}} onManagedRetry={() => {}} /></DshConnectionsProvider>))
+    function message(data: object) {
+      window.dispatchEvent(new MessageEvent('message', { source: ref.current!.contentWindow, origin: 'http://127.0.0.1:3181', data: { source: 'dsh-desktop-workspace-tree', ...data } }))
+    }
+    await act(async () => message({ type: 'dsh://workspace-tree:ready' }))
+    const a = container.querySelector<HTMLIFrameElement>('iframe[title="DSH A"]')!
+    const b = container.querySelector<HTMLIFrameElement>('iframe[title="DSH B"]')!
+    const postA = vi.spyOn(a.contentWindow!, 'postMessage')
+    const postB = vi.spyOn(b.contentWindow!, 'postMessage')
+    await act(async () => message({ type: 'dsh://workspace-tree:toolbar', action: 'new-session' }))
+    expect(postA).toHaveBeenCalledWith(expect.objectContaining({ command: 'start-session', args: {} }), connections[0].url)
+    expect(postB).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await act(async () => message({ type: 'dsh://workspace-tree:action', action: 'add-workspace', connectionId: 'b' }))
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('DSH B')
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('DSH A')
+    expect(document.querySelector('[role="combobox"]')).toBeNull()
+  })
+
   it('retains both frames on selection, replaces edited URLs, and disposes external frames with the plugin', async () => {
     const ref = createRef<HTMLIFrameElement>()
     const select = vi.fn()

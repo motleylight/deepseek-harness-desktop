@@ -10,6 +10,7 @@ function clientContext() {
     workspaces: {
       list: { getSnapshot: () => ({ phase: 'ready', archivedSessionIds: [], items: [{ workspaceId: 'same-workspace', title: 'Same name', path: '/remote/project', sessionIds: ['same-session'] }] }) },
       connectWorkspace: vi.fn(async () => 'created'),
+      startSession: vi.fn(),
       create: vi.fn(async () => ({ workspaceId: 'new-workspace' })),
       listDirectory: vi.fn(async () => ({ path: '/remote', crumbs: [], entries: [] })),
       pickDirectory: vi.fn(async () => '/local'),
@@ -61,11 +62,59 @@ it('browses and creates only through the target DSH, and never opens its native 
   await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ ok: false, error: expect.stringContaining('WORKSPACE_COMMAND_INVALID') }), 'http://tauri.localhost'))
 })
 
+it('delegates toolbar creation to native context selection without choosing a workspace', async () => {
+  const ctx = clientContext()
+  stop = mountWorkspaceCommands(ctx)
+  send('start-session')
+  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ ok: true, value: {} }), 'http://tauri.localhost'))
+  expect(ctx.workspaces.startSession).toHaveBeenCalledExactlyOnceWith()
+  expect(ctx.workspaces.connectWorkspace).not.toHaveBeenCalled()
+  expect(ctx.sessions.open).not.toHaveBeenCalled()
+})
+
+it('preserves native rename, fork, archive and workspace deletion semantics on the target DSH', async () => {
+  const rename = vi.fn(async () => ({ ok: true }))
+  const ctx = clientContext()
+  Object.assign(ctx.workspaces, { rename: vi.fn(async () => ({})), delete: vi.fn(async () => ({})), archiveSession: vi.fn(async () => ({})) })
+  Object.assign(ctx.sessions, { binding: () => ({ session: { rename } }), fork: vi.fn(async () => 'forked') })
+  stop = mountWorkspaceCommands(ctx)
+  send('rename-session', { sessionId: 'same-session', title: 'Renamed' })
+  send('fork-session', { sessionId: 'same-session' })
+  send('archive-session', { sessionId: 'same-session' })
+  send('rename-workspace', { workspaceId: 'same-workspace', title: 'Workspace' })
+  send('delete-workspace', { workspaceId: 'same-workspace' })
+  await vi.waitFor(() => expect(ctx.sessions.open).toHaveBeenCalledWith('forked'))
+  expect(rename).toHaveBeenCalledExactlyOnceWith('Renamed')
+  expect(ctx.workspaces.rename).toHaveBeenCalledExactlyOnceWith('same-workspace', 'Workspace')
+  expect(ctx.workspaces.delete).toHaveBeenCalledExactlyOnceWith('same-workspace')
+  expect(ctx.workspaces.archiveSession).toHaveBeenCalledExactlyOnceWith('same-session')
+  send('archive-session', { sessionId: 'foreign-id' })
+  send('delete-workspace', { workspaceId: 'foreign-id' })
+  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ ok: false, error: expect.stringContaining('SESSION_NOT_FOUND') }), 'http://tauri.localhost'))
+  expect(ctx.workspaces.archiveSession).toHaveBeenCalledOnce()
+  expect(ctx.workspaces.delete).toHaveBeenCalledOnce()
+})
+
+it('resolves directory actions from the target registry and archives only registered formal sessions', async () => {
+  const ctx = clientContext()
+  Object.assign(ctx.workspaces, { openPath: vi.fn(async () => {}), archiveSession: vi.fn(async () => {}) })
+  stop = mountWorkspaceCommands(ctx)
+  send('item-path', { workspaceId: 'same-workspace' })
+  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ value: { path: '/remote/project' } }), 'http://tauri.localhost'))
+  send('open-item-path', { workspaceId: 'same-workspace', path: '/wrong-machine' })
+  await vi.waitFor(() => expect(ctx.workspaces.openPath).toHaveBeenCalledExactlyOnceWith('/remote/project'))
+  send('archive-workspace', { workspaceId: 'same-workspace' })
+  await vi.waitFor(() => expect(ctx.workspaces.archiveSession).toHaveBeenCalledExactlyOnceWith('same-session'))
+  send('open-item-path', { workspaceId: 'foreign-id' })
+  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ ok: false, error: expect.stringContaining('DSH_PATH_UNAVAILABLE') }), 'http://tauri.localhost'))
+  expect(ctx.workspaces.openPath).toHaveBeenCalledOnce()
+})
+
 it('searches titles and contents and cancels reads on teardown', async () => {
   const ctx = clientContext()
   stop = mountWorkspaceCommands(ctx)
   send('search', { query: 'matching' })
-  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ value: { hasMore: false, items: [{ id: 'same-session', title: 'Same title', updatedAt: 7, workspace: 'Same name', snippet: 'matching content' }] } }), 'http://tauri.localhost'))
+  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ value: { hasMore: false, items: [expect.objectContaining({ id: 'same-session', title: 'Same title', updatedAt: 7, workspace: 'Same name', snippet: 'matching content' })] } }), 'http://tauri.localhost'))
   const signal = ctx.sessions.search.mock.calls[0][1] as AbortSignal
   expect(signal.aborted).toBe(false)
   ctx.sessions.search.mockImplementation(() => new Promise(() => {}))
@@ -116,14 +165,17 @@ it('pins same-id requests to their frame, rejects stale URLs and never falls bac
 })
 
 it('bounds external projection fields and does not substitute a local version', () => {
-  expect(parseSnapshot({ version: 7, workspaces: [{ id: 'w', title: 'W', path: '/a', sessions: [{ id: 's', title: '<script>', updatedAt: 9 }] }] })).toEqual({ version: '', workspaces: [{ id: 'w', title: 'W', path: '/a', sessions: [{ id: 's', title: '<script>', updatedAt: 9 }] }] })
+  expect(parseSnapshot({ version: 7, workspaces: [{ id: 'w', title: 'W', path: '/a', sessions: [{ id: 's', title: '<script>', updatedAt: 9 }] }] })).toEqual({ version: '', currentSessionId: '', unassigned: [], workspaces: [{ id: 'w', title: 'W', path: '/a', sessions: [{ id: 's', title: '<script>', updatedAt: 9, running: false, completed: false, blank: false, subagent: false }] }] })
 })
 
 it('uses Alpha UI navigation with its separate workspace controller and no service version', async () => {
   const legacy = clientContext()
-  const navigation = { connectWorkspace: vi.fn(async () => 'alpha-created'), listDirectory: vi.fn(async () => ({ path: '/linux' })) }
+  const navigation = { startSession: vi.fn(), connectWorkspace: vi.fn(async () => 'alpha-created'), listDirectory: vi.fn(async () => ({ path: '/linux' })) }
   const ctx = { ...legacy, connection: { generation: { getSnapshot: () => ({ host: { home: '/linux' } }) } }, workspaces: { list: legacy.workspaces.list, create: legacy.workspaces.create }, get: (name: string) => name === 'uiWorkspace' ? navigation : undefined }
   stop = mountWorkspaceCommands(ctx)
+  send('start-session')
+  expect(navigation.startSession).toHaveBeenCalledExactlyOnceWith()
+  expect(legacy.workspaces.startSession).not.toHaveBeenCalled()
   send('new-session', { workspaceId: 'same-workspace' })
   await vi.waitFor(() => expect(legacy.sessions.open).toHaveBeenCalledWith('alpha-created'))
   send('list-directory', { path: '/linux' })

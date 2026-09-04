@@ -16,7 +16,9 @@ External DSH servers do not need a plugin installation. Before an embedded page 
 
 ## Components and lifecycle
 
-Native toolbar styling is preserved. New session and Add workspace require a target connection; new sessions also require a workspace on that connection. Search spans connected DSH instances and labels each result with its connection and workspace. Unavailable content indexes retain title matches with a warning. The native grouping and ordering menu applies to local and external rows. Clicking a session selects its owning connection without requiring a header click first.
+Native toolbar styling is preserved. New session invokes the current DSH's native action: it uses the current session's workspace, then the recent workspace, or the native empty view when no workspace exists. There is no connection or workspace selection dialog. Workspace rows offer New session on hover and in their context menu; connection rows offer New workspace with only a directory to enter or browse. Rename, workspace deletion, session fork and archive remain scoped by connection and id.
+
+Flat view merges all connected sessions without connection or workspace groups. Each row has connection and workspace badges offering New workspace and New session respectively. Sorting applies to the whole list. Running sessions show a small spinner; completed but unread sessions show a dot until opened, including the current session in a hidden connection. Indicators use runtime status and observed running-to-idle transitions, not timestamps. Search spans all connections and retains title matches when content indexing is unavailable. Clicking a session opens its connection without a header click first.
 
 Local restart and shutdown controls, DSH version, Node runtime, data directory and port belong to the managed connection card. Desktop version and preferences are separate. SSH installation versions come from that host's check; HTTP service-reported versions are not installation versions. Missing remote information is never filled from local runtime data.
 

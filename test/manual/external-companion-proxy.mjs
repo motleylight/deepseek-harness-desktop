@@ -37,6 +37,10 @@ function startProxy(port, target, managed) {
       })
     })
     upstream.on('error', (error) => {
+      if (outgoing.headersSent) {
+        outgoing.destroy(error)
+        return
+      }
       outgoing.writeHead(502)
       outgoing.end(error.message)
     })

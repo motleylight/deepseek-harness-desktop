@@ -42,7 +42,8 @@ export function DshConnectionsProvider({ host, children }: PropsWithChildren<{ h
   }
   function t(key: string, values?: Record<string, unknown>) {
     const messages: Record<string, string> = host.locale.startsWith('zh') ? zh : en
-    return messages[key] ?? host.translate(key, values)
+    const message = messages[key]
+    return message === undefined ? host.translate(key, values) : message.replace(/\{(\w+)\}/g, (token, name) => values?.[name] === undefined ? token : String(values[name]))
   }
   return (
     <Context value={{ ...host, available, setAvailable, statuses, setStatus, t, editConnection, mutateConnection, deleteConnection: setDeleting }}>

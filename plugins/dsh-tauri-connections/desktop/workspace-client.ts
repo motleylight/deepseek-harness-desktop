@@ -1,8 +1,17 @@
-export interface WorkspaceSession { id: string, title: string, updatedAt?: number }
-export interface WorkspaceSnapshot { version?: string, workspaces: Array<{ id: string, title: string, path: string, sessions: WorkspaceSession[] }> }
+export interface WorkspaceSession { id: string, title: string, updatedAt?: number, running?: boolean, completed?: boolean, blank?: boolean, subagent?: boolean }
+export interface WorkspaceSnapshot { version?: string, currentSessionId?: string, unassigned?: WorkspaceSession[], workspaces: Array<{ id: string, title: string, path: string, sessions: WorkspaceSession[] }> }
 export interface SearchResults { hasMore: boolean, warning?: string, items: Array<WorkspaceSession & { workspace: string, snippet: string }> }
 export interface DirectoryListing { path: string, crumbs: Array<{ path: string, name: string }>, entries: Array<{ path: string, name: string }>, truncated: boolean }
 export interface WorkspaceCommands {
+  'start-session': { args: Record<string, never>, result: Record<string, never> }
+  'rename-workspace': { args: { workspaceId: string, title: string }, result: Record<string, never> }
+  'delete-workspace': { args: { workspaceId: string }, result: Record<string, never> }
+  'rename-session': { args: { sessionId: string, title: string }, result: Record<string, never> }
+  'fork-session': { args: { sessionId: string }, result: Record<string, never> }
+  'archive-session': { args: { sessionId: string }, result: Record<string, never> }
+  'archive-workspace': { args: { workspaceId: string }, result: Record<string, never> }
+  'item-path': { args: { workspaceId?: string, sessionId?: string }, result: { path: string } }
+  'open-item-path': { args: { workspaceId?: string, sessionId?: string }, result: { path: string } }
   'snapshot': { args: Record<string, never>, result: WorkspaceSnapshot }
   'search': { args: { query: string }, result: SearchResults }
   'list-directory': { args: { path?: string }, result: DirectoryListing }
@@ -93,13 +102,15 @@ function list(value: unknown) {
 }
 function session(value: unknown): WorkspaceSession {
   const item = record(value)
-  return { id: text(item.id, 160), title: text(item.title, 300), updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : undefined }
+  return { id: text(item.id, 160), title: text(item.title, 300), updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : undefined, running: item.running === true, completed: item.completed === true, blank: item.blank === true, subagent: item.subagent === true }
 }
 /** Bounds data from an external page and never treats it as persisted Desktop configuration. */
 export function parseSnapshot(value: unknown): WorkspaceSnapshot {
   const source = record(value)
   return {
     version: text(source.version, 160),
+    currentSessionId: text(source.currentSessionId, 160),
+    unassigned: list(source.unassigned).map(session).filter(item => item.id && item.title),
     workspaces: list(source.workspaces).map((value) => {
       const item = record(value)
       return { id: text(item.id, 160), title: text(item.title, 300), path: text(item.path), sessions: list(item.sessions).map(session).filter(item => item.id && item.title) }
