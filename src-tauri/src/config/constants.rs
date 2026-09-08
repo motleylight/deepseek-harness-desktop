@@ -10,8 +10,15 @@ pub const NODE_BASE_URL: &str = "https://nodejs.org/dist/";
 pub const NODE_MIRROR_BASE_URL: &str = "https://npmmirror.com/mirrors/node/";
 
 /// 打包的 DeepSeek Harness 发行版下载地址（GitHub Release，默认首选源）
+#[cfg(windows)]
+pub const DSH_CORE_URL: &str =
+    "https://github.com/motleylight/deepseek-harness/releases/latest/download/";
+#[cfg(not(windows))]
 pub const DSH_CORE_URL: &str =
     "https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/latest/download/";
+
+/// Windows 桌面发行线验收的 OpenCode 主会话核心。
+pub const DSH_WINDOWS_CORE_TAG: &str = "dsh-v0.1.1-rc.3";
 
 /// GitHub Release 的 ghfast.top 中转前缀（透传官方 URL，下载内容一致、
 /// 仍可做 SHA-256 完整性校验），用作官方直连失败时的兜底镜像。

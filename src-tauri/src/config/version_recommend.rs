@@ -12,12 +12,18 @@ const FILE_NAME: &str = "version-recommend.json";
 #[derive(Debug, Default, Deserialize)]
 struct VersionRecommend {
     dsh: Option<String>,
+    windows: Option<String>,
 }
 
 /// 解析推荐版本清单内容。
 fn parse_recommended_version(content: &str) -> Option<String> {
     let config: VersionRecommend = serde_json::from_str(content).ok()?;
-    let version = config.dsh?.trim().to_string();
+    let selected = if cfg!(windows) {
+        config.windows.or(config.dsh)
+    } else {
+        config.dsh
+    };
+    let version = selected?.trim().to_string();
     (!version.is_empty() && semver::Version::parse(&version).is_ok()).then_some(version)
 }
 
@@ -91,6 +97,17 @@ mod tests {
 
     #[test]
     fn parses_valid_recommendation_and_trims_whitespace() {
+        assert_eq!(
+            parse_recommended_version(r#"{"dsh":"0.1.1-rc.2","windows":"0.1.1-rc.3"}"#),
+            Some(
+                if cfg!(windows) {
+                    "0.1.1-rc.3"
+                } else {
+                    "0.1.1-rc.2"
+                }
+                .to_string()
+            )
+        );
         assert_eq!(
             parse_recommended_version(r#"{ "dsh": " 0.1.1-rc.2 " }"#),
             Some("0.1.1-rc.2".to_string())

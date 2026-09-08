@@ -5,7 +5,7 @@
 //! API 限流/不可用时逐级兜底到 releases.atom / expanded_assets HTML /
 //! tag 内嵌 build-id，保证更新提示与完整性校验不因 403 而失效。
 //!
-//! 预览版（GitHub Release 标记 Pre-release、或 tag 命名含预览标记，见
+//! Windows 使用桌面发行线指定的核心 tag。其他平台的预览版（GitHub Release 标记 Pre-release、或 tag 命名含预览标记，见
 //! [`is_preview_tag`]）**不参与更新判定**：`/releases/latest` 按 label 自动排除，
 //! releases.atom 兜底按 tag 命名跳过；但核心列表（`fetch_dsh_pkg_releases`）
 //! 仍会列出预览版供用户手动下载安装。
@@ -13,8 +13,14 @@
 use crate::config;
 
 /// GitHub API 地址（未认证限流 60 次/小时/IP，仅供每次启动检查一次）
+#[cfg(windows)]
+const DSH_PKG_GITHUB_API: &str = "https://api.github.com/repos/motleylight/deepseek-harness";
+#[cfg(not(windows))]
 const DSH_PKG_GITHUB_API: &str = "https://api.github.com/repos/dsh-tauri-desk/deepseek-harness-pkg";
 /// pkg 仓库 HTML 来源；`releases.atom` 走 github.com 而非 api.github.com，不受未认证限流约束。
+#[cfg(windows)]
+const DSH_PKG_REPO: &str = "https://github.com/motleylight/deepseek-harness";
+#[cfg(not(windows))]
 const DSH_PKG_REPO: &str = "https://github.com/dsh-tauri-desk/deepseek-harness-pkg";
 const GITHUB_RELEASES_PAGE_SIZE: usize = 100;
 
@@ -237,9 +243,12 @@ async fn fetch_dsh_digest_from_expanded_assets(
 /// 修复前：api.github.com 一限流 `fetch_latest_dsh_pkg_info` 直接返回 Err，
 /// `check_dsh_update` 静默跳过，导致上游 rc.8 发布后桌面端迟迟不出现更新提示。
 ///
-/// 预览版（Pre-release label 或 tag 命名，见 [`is_preview_tag`]）不返回：
+/// Windows 返回桌面发行线指定的 tag；其他平台不返回预览版（见 [`is_preview_tag`]）：
 /// 返回 Err 由调用方保持本地安装、不提示更新，避免把预览版推给用户自动更新。
 pub async fn fetch_latest_dsh_pkg_info() -> Result<LatestDshPkg, String> {
+    if cfg!(windows) {
+        return fetch_dsh_pkg_asset(config::DSH_WINDOWS_CORE_TAG).await;
+    }
     let client = github_client()?;
     let expected_name = config::get_dsh_download_url()?
         .rsplit('/')
@@ -465,8 +474,13 @@ pub async fn fetch_dsh_pkg_asset(tag: &str) -> Result<LatestDshPkg, String> {
 }
 
 /// 从核心 tag 中解析版本号：`dsh-0.1.0-rc.7-32054485373`、
-/// `src-0.1.2-alpha.1` 或 `dsh-src-0.1.2-alpha.1-33260039971` → 对应的 SemVer。
+/// `src-0.1.2-alpha.1`、`dsh-v0.1.1-rc.3` 或 `dsh-src-0.1.2-alpha.1-33260039971` → 对应的 SemVer。
 pub fn parse_version_from_tag(tag: &str) -> Option<String> {
+    if let Some(version) = tag.strip_prefix("dsh-v") {
+        return semver::Version::parse(version)
+            .ok()
+            .map(|_| version.to_string());
+    }
     let has_dsh_prefix = tag.starts_with("dsh-");
     let tag = tag.strip_prefix("dsh-").unwrap_or(tag);
     if let Some(version) = tag.strip_prefix("src-") {
@@ -835,6 +849,11 @@ mod tests {
 
     #[test]
     fn parse_version_from_tag_formats() {
+        assert_eq!(
+            parse_version_from_tag("dsh-v0.1.1-rc.3").as_deref(),
+            Some("0.1.1-rc.3")
+        );
+        assert_eq!(parse_version_from_tag("dsh-vinvalid"), None);
         assert_eq!(
             parse_version_from_tag("dsh-0.1.0-rc.7-32054485373").as_deref(),
             Some("0.1.0-rc.7")

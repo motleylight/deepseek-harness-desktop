@@ -140,7 +140,11 @@ brew install dsh-tauri-desk/desktop/deepseek-harness
         http://127.0.0.1:3080/  ← 内嵌界面
 ```
 
-Harness 发行版由 [deepseek-harness-pkg](https://github.com/dsh-tauri-desk/deepseek-harness-pkg) 构建发布。每次启动都会对比最新发行版，本地过期时提醒下载更新；GitHub 不可达时保留本地安装。通过 CLI 全局安装的本地核心会被优先使用。
+Windows 0.10.7 使用 [DSH 0.1.1-rc.3](https://github.com/motleylight/deepseek-harness/releases/tag/dsh-v0.1.1-rc.3) 核心，固定下载该版本的 Windows 产物并校验 GitHub 资产 SHA-256。已有安装通过核心管理入口升级；通过 CLI 全局安装或手动选定的其他核心仍需分别确认版本。macOS / Linux 继续使用 [deepseek-harness-pkg](https://github.com/dsh-tauri-desk/deepseek-harness-pkg) 的推荐核心。
+
+新建会话选择 OpenCode 预设，即由 Cordis 插件 `@deepseek-ai/dsh-agent-acp` 接管主会话执行，OpenCode 管理模型、工具和上下文；`dsh-subagent-acp` 仍用于子任务委派。模型、权限、Plan / Build 和用量显示复用 DSH 原有入口。OpenCode 必须独立安装并配置登录；仅有 Windows 命令 shim 时，在 OpenCode 预设中配置实际可执行文件路径。插件会清理继承的凭据变量；使用环境变量认证时，需要在预设 `env` 中显式引用所需变量，不能把凭据写入发行包。
+
+Windows 核心打包需要 Node 24：在固定的 DSH checkout 中以 `DSH_BUILD_CLIENT_PROFILE=official` 运行 `pnpm run build`，再运行 `pnpm --config.node-linker=hoisted deploy --filter @deepseek-ai/dsh --prod <暂存目录> --legacy`。在本仓库执行 `node scripts/stage-dsh-core.mjs <DSH checkout> <暂存目录>`，补齐内部 peer 包并验证发布入口；将暂存目录内的 `node_modules`、`package.json` 和 `LICENSE` 压缩为 `deepseek-harness-pkg-windows.zip`。上传核心 Release 后，核对资产 digest 与本地 SHA-256，再发布桌面安装包。
 
 ## 说明
 

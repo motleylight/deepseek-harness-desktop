@@ -81,6 +81,9 @@ fn dsh_pkg_asset_filename() -> Result<String, String> {
 
 /// 打包的 DeepSeek Harness 发行版下载地址（GitHub 官方直连，首选源）
 pub fn get_dsh_download_url() -> Result<String, String> {
+    if cfg!(windows) {
+        return get_dsh_download_url_for_tag(DSH_WINDOWS_CORE_TAG);
+    }
     Ok(format!(
         "{}{}",
         dsh_core_base_url(),
@@ -644,6 +647,10 @@ mod tests {
         let dsh = get_dsh_download_url().expect("dsh url");
         assert!(dsh.starts_with("https://"));
         assert!(dsh.ends_with(".zip"));
+        if cfg!(windows) {
+            assert_eq!(dsh, format!("https://github.com/motleylight/deepseek-harness/releases/download/{DSH_WINDOWS_CORE_TAG}/deepseek-harness-pkg-windows.zip"));
+            assert_eq!(get_dsh_download_url_for_tag("dsh-v0.1.1-rc.4").unwrap(), "https://github.com/motleylight/deepseek-harness/releases/download/dsh-v0.1.1-rc.4/deepseek-harness-pkg-windows.zip");
+        }
     }
 
     #[test]
