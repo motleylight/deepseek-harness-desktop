@@ -18,7 +18,7 @@ pub const DSH_CORE_URL: &str =
     "https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/latest/download/";
 
 /// Windows 桌面发行线验收的 OpenCode 主会话核心。
-pub const DSH_WINDOWS_CORE_TAG: &str = "dsh-v0.1.1-rc.3";
+pub const DSH_WINDOWS_CORE_TAG: &str = "dsh-v0.1.1-rc.4";
 
 /// GitHub Release 的 ghfast.top 中转前缀（透传官方 URL，下载内容一致、
 /// 仍可做 SHA-256 完整性校验），用作官方直连失败时的兜底镜像。
