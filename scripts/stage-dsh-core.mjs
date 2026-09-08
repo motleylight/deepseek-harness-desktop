@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
-/** Materialize a built DSH CLI deploy for the Desktop Windows core ZIP. Requires Node 24. */
+/** Materialize a built, hoisted DSH CLI deploy for the Desktop Windows core ZIP. Requires Node 24. */
 import { cpSync, existsSync, globSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, matchesGlob, relative, resolve } from 'node:path'
 import process from 'node:process'
 
 const [sourceArg, deployArg] = process.argv.slice(2)
@@ -25,11 +25,18 @@ for (const file of execFileSync('git', ['ls-files', '--', '**/package.json'], { 
 function copyPackage(name, entry) {
   const target = join(modules, name)
   mkdirSync(target, { recursive: true })
-  for (const pattern of entry.manifest.files ?? []) {
-    if (pattern.startsWith('!') || pattern.includes('..'))
+  const patterns = entry.manifest.files ?? []
+  const excluded = patterns.filter(pattern => pattern.startsWith('!')).map(pattern => pattern.slice(1))
+  for (const pattern of patterns) {
+    if (pattern.includes('..'))
       throw new Error(`Unsupported files pattern: ${name}: ${pattern}`)
+    if (pattern.startsWith('!'))
+      continue
     for (const file of globSync(pattern, { cwd: entry.path })) {
-      cpSync(join(entry.path, file), join(target, file), { recursive: true })
+      cpSync(join(entry.path, file), join(target, file), {
+        recursive: true,
+        filter: path => !excluded.some(pattern => matchesGlob(relative(entry.path, path).replaceAll('\\', '/'), pattern)),
+      })
     }
   }
   const manifest = structuredClone(entry.manifest)
