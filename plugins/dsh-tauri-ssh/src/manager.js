@@ -226,7 +226,7 @@ export class SshManager {
       if (!active(this))
         return
       if (!status.installed)
-        throw new Error('DSH_NOT_INSTALLED: install or adopt the remote DSH first')
+        throw new Error('DSH_NOT_MANAGED: inspect the remote DSH, then install or adopt it')
       if (!status.running)
         await this.operation(id, { action: 'start' })
       if (!active(this))

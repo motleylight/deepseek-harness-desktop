@@ -6,6 +6,7 @@ import process from 'node:process'
 
 const helper = readFileSync(new URL('../dist/remote.cjs', import.meta.url), 'utf8')
 const bootstrap = readFileSync(new URL('./bootstrap.sh', import.meta.url), 'utf8')
+const shellPath = readFileSync(new URL('./shell-path.sh', import.meta.url), 'utf8')
 
 /** SSH operands are never accepted as option fragments or shell commands. */
 export function validateTarget(value) {
@@ -58,7 +59,7 @@ export class SshTransport {
   async run(target, request, onLog = () => {}) {
     const child = this.launch(target)
     const encoded = Buffer.from(JSON.stringify(request)).toString('base64')
-    const source = `${bootstrap.replaceAll('__ACTION__', request.action === 'install' ? 'install' : 'inspect')
+    const source = `${shellPath}\n${bootstrap.replaceAll('__ACTION__', request.action === 'install' ? 'install' : 'inspect')
     }\n"$DSH_NODE" - '${encoded}' <<'DSH_SSH_REMOTE_HELPER'\n${helper}\nDSH_SSH_REMOTE_HELPER\n`
     return new Promise((resolve, reject) => {
       let stdout = ''

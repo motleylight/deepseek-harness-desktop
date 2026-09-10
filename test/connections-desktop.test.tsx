@@ -22,7 +22,13 @@ const config: ConnectionsConfig = { connections, managed_connection_name: 'Devel
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   vi.clearAllMocks()
-  invoke.mockResolvedValue(config)
+  invoke.mockImplementation(async (command, input) => {
+    if (command === 'dsh_ssh_request' && input.method === 'connection-open')
+      return `http://127.0.0.1:${input.params.id === 'a' ? 4182 : 4183}/?dsh-ssh-token=test`
+    if (command === 'probe_dsh_connection')
+      return input.url
+    return config
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -136,7 +142,7 @@ describe('parallel frames', () => {
     const postA = vi.spyOn(a.contentWindow!, 'postMessage')
     const postB = vi.spyOn(b.contentWindow!, 'postMessage')
     await act(async () => message({ type: 'dsh://workspace-tree:toolbar', action: 'new-session' }))
-    expect(postA).toHaveBeenCalledWith(expect.objectContaining({ command: 'start-session', args: {} }), connections[0].url)
+    expect(postA).toHaveBeenCalledWith(expect.objectContaining({ command: 'start-session', args: {} }), 'http://127.0.0.1:4182')
     expect(postB).not.toHaveBeenCalled()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     await act(async () => message({ type: 'dsh://workspace-tree:action', action: 'add-workspace', connectionId: 'b' }))

@@ -13,7 +13,7 @@
   },
   "files": ["README.en.md", "README.md", "cordis.patch.yml", "desktop", "dist", "locales"],
   "dsh": {
-    "client": { "inject": ["@deepseek-ai/dsh-client-runtime"], "platform": "web" },
+    "client": { "inject": ["@deepseek-ai/dsh-client-ui-layout"], "platform": "web" },
     "bundle": { "patch": "./cordis.patch.yml" }
   },
   "scripts": { "build": "node build.mjs" },
@@ -34,5 +34,6 @@
     "react-if-lite": { "optional": true },
     "react-use": { "optional": true },
     "tailwind-variants": { "optional": true }
-  }
+  },
+  "devDependencies": { "esbuild": "catalog:" }
 }

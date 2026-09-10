@@ -86,7 +86,7 @@
   "connections.rename_title": "重命名连接",
   "connections.rename_description": "仅修改此 Desktop 工作区中的显示名称。",
   "connections.edit_address_title": "编辑连接地址",
-  "connections.edit_address_description": "Desktop 会先检查新地址；检查失败时会继续保留当前连接。",
+  "connections.edit_address_description": "可粘贴带 ?token= 的 DSH 启动链接。认证仅用于本次运行，重启桌面后需重新粘贴；保存的地址不含 token。检查失败时保留原连接。",
   "connections.delete_title": "删除连接？",
   "connections.delete_description": "这会从 Desktop 的连接列表和工作区树中移除“{name}”。远端 DSH 的工作区和会话不会被删除。",
   "connections.address_label": "连接地址",

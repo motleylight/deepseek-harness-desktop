@@ -18,15 +18,14 @@ export interface UseBackupsResult {
   createBackup: (includeCredentials: boolean) => Promise<BackupInfo>
   restoreBackup: (timestamp: string, asNew: boolean) => Promise<void>
   deleteBackup: (timestamp: string) => Promise<void>
-  updateAutoBackupSettings: (settings: {
-    autoBackupEnabled?: boolean
-    autoBackupIntervalDays?: number
-    autoBackupOnStartup?: boolean
-    autoBackupOnChange?: boolean
-    backupRetentionCount?: number
-    backupIncludeCredentials?: boolean
-  }) => Promise<void>
+  /** 任意操作进行中（统一禁用按钮用） */
   busy: boolean
+  /** 仅创建备份进行中（用于「立即备份」按钮显示 loading） */
+  creating: boolean
+  /** 仅还原进行中 */
+  restoring: boolean
+  /** 仅删除进行中 */
+  deleting: boolean
 }
 
 /**
@@ -80,18 +79,6 @@ export function useBackups(): UseBackupsResult {
     mutationFn: (timestamp: string) => invoke<void>('delete_backup', { timestamp }),
     onSuccess: invalidate,
   })
-  const updateSettings = useMutation({
-    mutationFn: (settings: {
-      autoBackupEnabled?: boolean
-      autoBackupIntervalDays?: number
-      autoBackupOnStartup?: boolean
-      autoBackupOnChange?: boolean
-      backupRetentionCount?: number
-      backupIncludeCredentials?: boolean
-    }) => invoke<void>('update_app_config', settings),
-    onSuccess: invalidate,
-  })
-
   return {
     backups: data ?? [],
     loading: isLoading,
@@ -109,10 +96,9 @@ export function useBackups(): UseBackupsResult {
       await remove.mutateAsync(timestamp)
       await refetch()
     },
-    updateAutoBackupSettings: async (settings) => {
-      await updateSettings.mutateAsync(settings)
-      await refetch()
-    },
-    busy: create.isPending || restore.isPending || remove.isPending || updateSettings.isPending,
+    busy: create.isPending || restore.isPending || remove.isPending,
+    creating: create.isPending,
+    restoring: restore.isPending,
+    deleting: remove.isPending,
   }
 }

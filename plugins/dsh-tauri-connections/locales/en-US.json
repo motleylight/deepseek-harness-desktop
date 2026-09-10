@@ -86,7 +86,7 @@
   "connections.rename_title": "Rename connection",
   "connections.rename_description": "Only changes this Desktop workspace label.",
   "connections.edit_address_title": "Edit connection address",
-  "connections.edit_address_description": "Desktop checks the new address first and keeps the current connection when that check fails.",
+  "connections.edit_address_description": "Paste a DSH launch link containing ?token=. Authentication lasts until Desktop exits; paste a fresh link after restarting. Saved addresses omit the token. A failed check preserves the original connection.",
   "connections.delete_title": "Delete connection?",
   "connections.delete_description": "This removes “{name}” from Desktop's connection list and workspace tree. The remote DSH workspaces and sessions stay unchanged.",
   "connections.address_label": "Connection address",

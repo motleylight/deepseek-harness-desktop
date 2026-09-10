@@ -245,6 +245,11 @@ async fn fetch_dsh_digest_from_expanded_assets(
 ///
 /// Windows 返回桌面发行线指定的 tag；其他平台不返回预览版（见 [`is_preview_tag`]）：
 /// 返回 Err 由调用方保持本地安装、不提示更新，避免把预览版推给用户自动更新。
+/// 预览版（Pre-release label 或 tag 命名，见 [`is_preview_tag`]）不参与更新判定：
+/// 最新 release 恰好是预览版时**不直接推给用户**，而是由 [`fetch_latest_non_preview`]
+/// 回退到最新一条非预览版 release 供更新/安装判定（issue #299：最新 alpha 发布后
+/// 旧实现直接回 Err，导致初始化流程报 `DSH_INTEGRITY_UNAVAILABLE` 卡死）。仅当所有
+/// release 都是预览版（找不到非预览版）时才返回 Err，由调用方保持本地安装、不提示。
 pub async fn fetch_latest_dsh_pkg_info() -> Result<LatestDshPkg, String> {
     if cfg!(windows) {
         return fetch_dsh_pkg_asset(config::DSH_WINDOWS_CORE_TAG).await;
@@ -287,15 +292,15 @@ pub async fn fetch_latest_dsh_pkg_info() -> Result<LatestDshPkg, String> {
 
     // 2b. 预览版不参与更新判定：`/releases/latest` 已按 label 排除 Pre-release，
     //     这里按 tag 命名再兜底拦一道（发布时漏标 Pre-release label 的预览版
-    //     同样不会推给用户自动更新）。返回 Err 由调用方保持本地安装、不提示。
+    //     同样不会推给用户自动更新）。但「最新 release 恰好是预览版」时不能因此
+    //     让初始化/更新流程整体卡死（issue #299），改为回退到最新非预览版 release，
+    //     仍然绝不把预览版推给用户自动更新。
     if is_preview_tag(&tag_name) {
         log::info!(
-            "DSH_SKIP_PREVIEW: latest release {} is a preview, ignoring for update",
+            "DSH_SKIP_PREVIEW: latest release {} is a preview, falling back to latest non-preview release",
             tag_name
         );
-        return Err(format!(
-            "DSH_PREVIEW_RELEASE: {tag_name} is a preview release, not an update"
-        ));
+        return fetch_latest_non_preview().await;
     }
 
     // 3. commit：优先 API /commits/{tag}，失败用 tag 内嵌 build-id 兜底
@@ -387,6 +392,25 @@ pub async fn fetch_dsh_pkg_version(version: &str) -> Result<LatestDshPkg, String
         .find(|release| parse_version_from_tag(&release.tag).as_deref() == Some(version))
         .ok_or_else(|| format!("DSH_RECOMMENDED_NOT_FOUND: no release found for {version}"))?;
     fetch_dsh_pkg_asset(&release.tag).await
+}
+
+/// 最新非预览版 release：仅当最新 release 是预览版时由 [`fetch_latest_dsh_pkg_info`] 调用。
+///
+/// 从完整 release 列表（[`fetch_dsh_pkg_releases`]，最新在前，含 Pre-release label）
+/// 取最新一条「非预览」的 release（label 非 Pre-release 且 tag 命名非预览标记，
+/// 见 [`is_preview_tag`]），再复用固定 tag 的资产/摘要查询，确保下载内容与校验摘要
+/// 属于同一发布。找不到非预览版（全部是预览版）时返回错误，调用方保持不更新——
+/// 不把预览版推给用户自动更新，也不再以「最新是预览版」整段卡死初始化流程。
+async fn fetch_latest_non_preview() -> Result<LatestDshPkg, String> {
+    let tag = fetch_dsh_pkg_releases()
+        .await?
+        .into_iter()
+        .find(|m| !m.prerelease && !is_preview_tag(&m.tag))
+        .map(|m| m.tag)
+        .ok_or_else(|| {
+            "DSH_PREVIEW_RELEASE: no non-preview release available, not an update".to_string()
+        })?;
+    fetch_dsh_pkg_asset(&tag).await
 }
 
 /// 拉取指定 tag 的发行版信息（资产 URL + 可信摘要），供核心面板按版本下载。
@@ -621,20 +645,32 @@ pub fn resolve_update(
     match record_tag.and_then(parse_version_from_tag) {
         Some(record_version) if record_behind_latest(&record_version) => UpdateCheck::HealUpToDate,
         Some(_) => UpdateCheck::UpdateAvailable,
-        None => match legacy_tags
-            .iter()
-            .find(|(_, commit)| Some(commit.as_str()) == record_commit)
-        {
-            Some((tag, _)) => match parse_version_from_tag(tag) {
+        None => {
+            // 收集所有反查命中 record_commit 的 tag（不仅首条）：同一个 git commit
+            // 可能被多个 tag 指向（stable / latest 别名、不同命名规范的同源 tag），
+            // `.find()` 只取首个会在 alias 场景错过 latest.tag 的对齐。
+            let matches: Vec<&(String, String)> = legacy_tags
+                .iter()
+                .filter(|(_, commit)| Some(commit.as_str()) == record_commit)
+                .collect();
+            match matches.as_slice() {
+            // 唯一命中且 tag 与最新 release 同名 → 同一发布（API 限流 commit 兜底
+            // 造成的 tag 差异，承接 #379 的修复场景）。
+            [(tag, _)] if tag.as_str() == latest.tag.as_str() => UpdateCheck::UpToDate,
+            // 唯一命中但 tag 与最新 release 不一致 → 同版本热修或滞后记录。
+            [(tag, _)] => match parse_version_from_tag(tag) {
                 Some(record_version) if record_behind_latest(&record_version) => {
                     UpdateCheck::HealUpToDate
                 }
                 // 反查到的版本与最新版本相同（或解析失败）→ 视为同版本热修
                 _ => UpdateCheck::UpdateAvailable,
             },
+            // 多 tag 共指同一 commit → 模糊，按更新提示以免漏报。
+            _ if matches.len() > 1 => UpdateCheck::UpdateAvailable,
             // 无法考证记录对应的版本 → 以实际安装文件为准，修正记录
-            None => UpdateCheck::HealUpToDate,
-        },
+            _ => UpdateCheck::HealUpToDate,
+            }
+        }
     }
 }
 
@@ -907,6 +943,55 @@ mod tests {
         assert!(!releases[1].prerelease);
     }
 
+    /// 验证 [`fetch_latest_non_preview`] 的选型谓词（无需网络的纯逻辑）：
+    /// 最新 release 是预览版时，应回退到最新一条「非预览」release（issue #299）。
+    #[test]
+    fn non_preview_selection_skips_preview_tags_and_labels() {
+        let pick_non_preview = |releases: &[DshPkgReleaseMeta]| {
+            releases
+                .iter()
+                .find(|m| !m.prerelease && !is_preview_tag(&m.tag))
+                .map(|m| m.tag.clone())
+        };
+
+        // 最新是标签预览版（dsh-…-alpha.3，issue #299 现场：dsh-0.1.2-alpha.3）
+        // + 上方一条被 Pre-release label 标记的 release → 回退到非预览 rc。
+        let releases = vec![
+            DshPkgReleaseMeta {
+                tag: "dsh-0.1.2-alpha.3-33444825807".to_string(),
+                prerelease: false,
+            },
+            DshPkgReleaseMeta {
+                tag: "dsh-0.1.1-rc.2-32485170079".to_string(),
+                prerelease: true,
+            },
+            DshPkgReleaseMeta {
+                tag: "dsh-0.1.1-rc.8-32342588166".to_string(),
+                prerelease: false,
+            },
+        ];
+        assert_eq!(
+            pick_non_preview(&releases).as_deref(),
+            Some("dsh-0.1.1-rc.8-32342588166")
+        );
+
+        // 全部是预览版（标签或 label）→ 找不到非预览版，`fetch_latest_non_preview`
+        // 返回错误，调用方按「无可用 release」处理（不推预览版更新）。
+        let all_preview = vec![
+            DshPkgReleaseMeta {
+                tag: "dsh-0.2.0-preview.1-32490000001".to_string(),
+                prerelease: false,
+            },
+            DshPkgReleaseMeta {
+                tag: "dsh-0.1.0-rc.7-32054485373".to_string(),
+                prerelease: true,
+            },
+        ];
+        assert_eq!(pick_non_preview(&all_preview), None);
+        // 空列表 → None
+        assert_eq!(pick_non_preview(&[]), None);
+    }
+
     #[test]
     fn atom_fallback_skips_preview_and_picks_next_non_preview() {
         // 最新条目是预览版 → 必须跳过，取下一条非预览版（rc）
@@ -1127,5 +1212,94 @@ mod tests {
             &[],
         );
         assert_eq!(decision, UpdateCheck::HealUpToDate);
+    }
+
+    #[test]
+    fn resolve_legacy_tag_match_latest_tag_is_up_to_date() {
+        // 回归：record_tag 缺失 + record_commit 为完整 SHA（API 正常时安装写入），
+        // 本次检查 API 限流 → latest.commit 兜底成 build-id。两种 commit 形态互不相等，
+        // `record_matches_latest_release` 提前判定为不匹配；进入 legacy_tags 反查后
+        // 必须再对齐一次 tag（同名即同一发布），不再盲目按「同版本热修」误报更新。
+        let latest = latest(
+            "dsh-0.1.2-rc.1-33729514615",
+            "33729514615", // 限流兜底
+        );
+        let tags = vec![(
+            "dsh-0.1.2-rc.1-33729514615".to_string(),
+            "abc123def4567890abcdef1234567890abcdef12".to_string(),
+        )];
+        let decision = resolve_update(
+            Some("abc123def4567890abcdef1234567890abcdef12"),
+            None,
+            Some("0.1.2-rc.1"),
+            &latest,
+            &tags,
+        );
+        assert_eq!(decision, UpdateCheck::UpToDate);
+    }
+
+    #[test]
+    fn resolve_legacy_tag_older_build_is_still_hotfix_update() {
+        // 反向回归：legacy_tags 反查到的是真正的同版本旧 build（不是 latest），
+        // 必须仍然报告 UpdateAvailable（hotfix），不能让上面的修复误伤这一支。
+        let latest = latest(
+            "dsh-0.1.2-rc.1-33729514615",
+            "33729514615",
+        );
+        let tags = vec![(
+            "dsh-0.1.2-rc.1-33600000000".to_string(), // 旧 build，不是 latest
+            "11122233344455556666777788899900aaaabbbb".to_string(),
+        )];
+        let decision = resolve_update(
+            Some("11122233344455556666777788899900aaaabbbb"),
+            None,
+            Some("0.1.2-rc.1"),
+            &latest,
+            &tags,
+        );
+        assert_eq!(decision, UpdateCheck::UpdateAvailable);
+    }
+    #[test]
+    fn resolve_legacy_tag_match_not_first_in_list_is_up_to_date() {
+        // 顺序无关：legacy_tags 把匹配项放在末尾，前面的非匹配项不能让 `.find()`
+        // 提前截走、必须仍然识别为同一发布。
+        let latest = latest(
+            "dsh-0.1.2-rc.1-33729514615",
+            "33729514615",
+        );
+        let tags = vec![
+            ("unrelated/v0.0.1".to_string(), "fff000fff000fff000fff000fff000fff000f0000".to_string()),
+            ("dsh-0.1.2-rc.1-33729514615".to_string(), "abc123def4567890abcdef1234567890abcdef12".to_string()),
+        ];
+        let decision = resolve_update(
+            Some("abc123def4567890abcdef1234567890abcdef12"),
+            None,
+            Some("0.1.2-rc.1"),
+            &latest,
+            &tags,
+        );
+        assert_eq!(decision, UpdateCheck::UpToDate);
+    }
+
+    #[test]
+    fn resolve_legacy_tag_multiple_matches_is_update_available() {
+        // 防御：同一 commit 被多个 tag 指向（stable / latest 别名、不同命名规范的
+        // 同源 tag），反查不唯一 → 模糊场景，按更新提示以免漏报。
+        let latest = latest(
+            "dsh-0.1.2-rc.1-33729514615",
+            "33729514615",
+        );
+        let tags = vec![
+            ("dsh-0.1.2-rc.1-stable".to_string(), "abc123def4567890abcdef1234567890abcdef12".to_string()),
+            ("dsh-0.1.2-rc.1-33729514615".to_string(), "abc123def4567890abcdef1234567890abcdef12".to_string()),
+        ];
+        let decision = resolve_update(
+            Some("abc123def4567890abcdef1234567890abcdef12"),
+            None,
+            Some("0.1.2-rc.1"),
+            &latest,
+            &tags,
+        );
+        assert_eq!(decision, UpdateCheck::UpdateAvailable);
     }
 }

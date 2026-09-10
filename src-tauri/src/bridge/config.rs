@@ -64,6 +64,9 @@ pub async fn get_app_config(app_handle: AppHandle) -> Result<config::Setting, St
 /// `close_action` 对应前端的 camelCase `closeAction`，命中关闭按钮时的行为
 /// （`tray` = 隐藏到托盘，`quit` = 退出应用）；取值收敛由 `update_store_dat_setting`
 /// 内的 `normalize_close_action` 统一负责，此处不做二次校验以免白名单漂移。
+///
+/// 备份字段（backup_retention_count / backup_include_credentials）由前端
+/// 设置页写入，归一化由 `normalize_backup_fields` 统一负责。
 #[tauri::command]
 pub async fn update_app_config(
     app_handle: AppHandle,
@@ -71,6 +74,8 @@ pub async fn update_app_config(
     auto_start: Option<bool>,
     cli_link_enabled: Option<bool>,
     close_action: Option<String>,
+    backup_retention_count: Option<u32>,
+    backup_include_credentials: Option<bool>,
 ) -> Result<config::Setting, String> {
     if let Some(port) = port {
         if port == 0 {
@@ -102,9 +107,13 @@ pub async fn update_app_config(
         if let Some(action) = close_action {
             setting.close_action = action;
         }
+        if let Some(count) = backup_retention_count {
+            setting.backup_retention_count = count;
+        }
+        if let Some(include) = backup_include_credentials {
+            setting.backup_include_credentials = include;
+        }
     });
-    // 配置变化后，若开启了「配置变化时备份」，标记待执行（由 scheduler tick 去抖后执行）
-    crate::service::backup::schedule::mark_config_changed(&app_handle);
     Ok(setting)
 }
 
@@ -116,7 +125,6 @@ pub async fn add_dsh_connection(
     url: String,
 ) -> Result<config::Setting, String> {
     let setting = config::add_dsh_connection(&app_handle, name, url)?;
-    crate::service::backup::schedule::mark_config_changed(&app_handle);
     Ok(setting)
 }
 
@@ -129,7 +137,6 @@ pub async fn update_dsh_connection(
     url: String,
 ) -> Result<config::Setting, String> {
     let setting = config::update_dsh_connection(&app_handle, id, name, url)?;
-    crate::service::backup::schedule::mark_config_changed(&app_handle);
     Ok(setting)
 }
 
@@ -140,7 +147,6 @@ pub async fn rename_managed_dsh_connection(
     name: String,
 ) -> Result<config::Setting, String> {
     let setting = config::rename_managed_dsh_connection(&app_handle, name)?;
-    crate::service::backup::schedule::mark_config_changed(&app_handle);
     Ok(setting)
 }
 
@@ -152,7 +158,6 @@ pub async fn set_dsh_connection_connected(
     connected: bool,
 ) -> Result<config::Setting, String> {
     let setting = config::set_dsh_connection_connected(&app_handle, id, connected)?;
-    crate::service::backup::schedule::mark_config_changed(&app_handle);
     Ok(setting)
 }
 
@@ -163,7 +168,6 @@ pub async fn select_dsh_connection(
     id: String,
 ) -> Result<config::Setting, String> {
     let setting = config::select_dsh_connection(&app_handle, id)?;
-    crate::service::backup::schedule::mark_config_changed(&app_handle);
     Ok(setting)
 }
 
@@ -174,7 +178,6 @@ pub async fn remove_dsh_connection(
     id: String,
 ) -> Result<config::Setting, String> {
     let setting = config::remove_dsh_connection(&app_handle, id)?;
-    crate::service::backup::schedule::mark_config_changed(&app_handle);
     Ok(setting)
 }
 

@@ -26,19 +26,23 @@ export function ConnectionEditor({ target, onClose }: { target: ConnectionEditor
     setSaving(true)
     setError('')
     try {
-      if (target.kind === 'add' || (target.kind === 'edit' && connection?.url !== url.trim()))
-        await invoke('probe_dsh_connection', { url })
+      let savedUrl = url
+      const authenticate = target.kind === 'add' || (target.kind === 'edit' && connection?.url !== url.trim())
+      if (authenticate)
+        savedUrl = await invoke<string>('probe_dsh_connection', { url })
       let result: ConnectionsConfig
       if (connection?.id === 'managed-local') {
         result = await invoke('rename_managed_dsh_connection', { name })
       }
       else if (connection) {
-        result = await invoke('update_dsh_connection', { id: connection.id, name, url: target.kind === 'rename' ? connection.url : url })
+        result = await invoke('update_dsh_connection', { id: connection.id, name, url: target.kind === 'rename' ? connection.url : savedUrl })
       }
       else {
-        result = await invoke('add_dsh_connection', { name, url })
+        result = await invoke('add_dsh_connection', { name, url: savedUrl })
       }
       updateConfig(result)
+      if (authenticate)
+        window.dispatchEvent(new CustomEvent('dsh-connection-authenticated', { detail: savedUrl }))
       onClose()
     }
     catch (reason) {

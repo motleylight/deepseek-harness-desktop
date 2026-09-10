@@ -2,7 +2,7 @@ use super::constants::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_store::StoreExt;
 
 /// 桌面端自行启动并管理的本地 Harness 连接 id。
@@ -54,6 +54,11 @@ pub struct Setting {
     /// 桌面端启动服务与插件管理都以它为准（见 service::profile）。
     #[serde(default = "default_active_profile")]
     pub active_profile: String,
+    /// 首装档案引导是否已完成：桌面端首次安装时自动新建 Desktop 档案并切换为
+    /// 当前档案（见 service::profile::ensure_first_run_desktop_profile），成功后
+    /// 置位，之后启动不再重做（幂等标记，语义同 dsh_home_migrated）。
+    #[serde(default)]
+    pub desktop_profile_ready: bool,
     /// 活动核心的显式选择：`Some("local")` = 用户 CLI 安装的本地核心，
     /// `Some("app")` = 桌面端预打包核心；`None` = 自动（本地核心存在时优先）。
     #[serde(default)]
@@ -74,19 +79,7 @@ pub struct Setting {
     /// 默认，严格 enum 的一个意外值会连带清空端口/语言/档案等全部设置。
     #[serde(default = "default_close_action")]
     pub close_action: String,
-    /// 是否启用自动备份。
-    #[serde(default)]
-    pub auto_backup_enabled: bool,
-    /// 自动备份间隔（天）。
-    #[serde(default = "default_auto_backup_interval_days")]
-    pub auto_backup_interval_days: u32,
-    /// 是否在每次启动时自动备份。
-    #[serde(default)]
-    pub auto_backup_on_startup: bool,
-    /// 是否在配置变化时自动备份。
-    #[serde(default)]
-    pub auto_backup_on_change: bool,
-    /// 最多保留备份份数。
+    /// 保留备份份数（手动备份触发裁剪）。
     #[serde(default = "default_backup_retention_count")]
     pub backup_retention_count: u32,
     /// 备份是否包含凭据文件（`.credentials.yaml`）。
@@ -110,6 +103,16 @@ pub struct Setting {
     /// 外部连接 id 的本地递增序号，避免把地址或凭据用作持久化 id。
     #[serde(default = "default_next_connection_id")]
     pub next_connection_id: u32,
+    /// 桌宠能力是否永久启用；临时隐藏不能改动此字段。
+    #[serde(default)]
+    pub pet_enabled: bool,
+    /// 当前选中的桌宠模型包（`x.x.x.sprites/` 目录名或用户导入的 .zip 包名）；
+    /// `None` 或空串对外统一映射到内置默认宠物。
+    #[serde(default)]
+    pub active_pet: Option<String>,
+    /// 桌宠精灵图的显示宽度（逻辑像素）；`None` = 沿用窗口侧默认值。
+    #[serde(default)]
+    pub pet_size: Option<f64>,
 }
 
 pub const ZOOM_FACTOR_MIN: f64 = 0.5;
@@ -146,11 +149,6 @@ pub fn default_close_action() -> String {
     "tray".to_string()
 }
 
-/// 自动备份默认间隔：7 天。
-pub fn default_auto_backup_interval_days() -> u32 {
-    7
-}
-
 /// 默认保留备份份数：10 份。
 pub fn default_backup_retention_count() -> u32 {
     10
@@ -177,22 +175,13 @@ pub fn normalize_zoom_factor(value: f64) -> f64 {
     (clamped * steps_per_unit).round() / steps_per_unit
 }
 
-/// 归一化自动备份设置：把间隔和保留份数限制在有效范围内。
-///
-/// - `interval_days` 限制在 [1, 90]，未知/越界回落默认 7。
-/// - `retention_count` 限制在 [1, 50]，未知/越界回落默认 10。
-pub fn normalize_backup_settings(interval_days: u32, retention_count: u32) -> (u32, u32) {
-    let interval = if interval_days == 0 || interval_days > 90 {
-        default_auto_backup_interval_days()
-    } else {
-        interval_days
-    };
-    let retention = if retention_count == 0 || retention_count > 50 {
+/// 归一化保留份数到有效范围 [1, 50]，未知/越界回落默认 10。
+pub fn normalize_backup_retention(retention_count: u32) -> u32 {
+    if retention_count == 0 || retention_count > 50 {
         default_backup_retention_count()
     } else {
         retention_count
-    };
-    (interval, retention)
+    }
 }
 
 /// 归一化用户填写的 Harness HTTP(S) 地址。
@@ -298,14 +287,9 @@ fn normalize_connections(setting: &mut Setting) {
     }
 }
 
-/// 把 Setting 的备份字段归一化到有效范围。
+/// 把 Setting 的保留份数字段归一化到有效范围。
 fn normalize_backup_fields(setting: &mut Setting) {
-    let (interval, retention) = normalize_backup_settings(
-        setting.auto_backup_interval_days,
-        setting.backup_retention_count,
-    );
-    setting.auto_backup_interval_days = interval;
-    setting.backup_retention_count = retention;
+    setting.backup_retention_count = normalize_backup_retention(setting.backup_retention_count);
 }
 
 /// 默认服务端口：debug 构建与生产隔离，避免开发时与已运行的桌面端争用 3080。
@@ -331,14 +315,11 @@ impl Default for Setting {
             preset_hash: None,
             dsh_home_migrated: false,
             active_profile: default_active_profile(),
+            desktop_profile_ready: false,
             active_core: None,
             manual_port: None,
             zoom_factor: default_zoom_factor(),
             close_action: default_close_action(),
-            auto_backup_enabled: false,
-            auto_backup_interval_days: default_auto_backup_interval_days(),
-            auto_backup_on_startup: false,
-            auto_backup_on_change: false,
             backup_retention_count: default_backup_retention_count(),
             backup_include_credentials: false,
             connections: Vec::new(),
@@ -347,6 +328,9 @@ impl Default for Setting {
             connection_selection_initialized: true,
             active_connection_id: default_active_connection_id(),
             next_connection_id: default_next_connection_id(),
+            pet_enabled: false,
+            active_pet: None,
+            pet_size: None,
         }
     }
 }
@@ -368,6 +352,32 @@ fn store_dat_file_name() -> &'static str {
 fn setting_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// 首装检测结果（进程内缓存）：`true` = 本次启动时 store 持久化文件尚不存在，
+/// 即桌面端首次安装/首次启动（无论是否装过 dsh CLI——后者正是需要隔离的
+/// 场景：CLI 侧的大量插件/补丁不应涌入桌面端档案）。
+static FIRST_INSTALL: OnceLock<bool> = OnceLock::new();
+
+/// 首装检测：store 持久化文件不存在 → 桌面端首次安装。
+///
+/// 必须在窗口创建与任何 store 写入之前调用一次（builder setup 最先）：窗口
+/// 几何恢复/退出保存都会写 store 并创建文件，判定晚于它们会把首装误判为升级。
+/// 判定结果进程内缓存，之后任何时点读取都拿到本次启动的同一结论。
+pub fn detect_first_install<R: Runtime>(app_handle: &AppHandle<R>) -> bool {
+    *FIRST_INSTALL.get_or_init(|| {
+        app_handle
+            .path()
+            .app_data_dir()
+            // 目录解析失败按老用户处理（保守：不做引导，回落 web 档案老行为）
+            .map(|dir| !dir.join(store_dat_file_name()).exists())
+            .unwrap_or(false)
+    })
+}
+
+/// 读取首装检测结果；尚未检测（或检测失败）时返回 `false`，保守按老用户处理。
+pub fn is_first_install() -> bool {
+    FIRST_INSTALL.get().copied().unwrap_or(false)
 }
 
 fn read_store_dat_setting<R: Runtime>(app_handle: &AppHandle<R>) -> Setting {
@@ -415,11 +425,14 @@ fn preserve_persisted_fields(mut replacement: Setting, current: &Setting) -> Set
     replacement.connection_selection_initialized = current.connection_selection_initialized;
     replacement.active_connection_id = current.active_connection_id.clone();
     replacement.next_connection_id = current.next_connection_id;
+    replacement.pet_enabled = current.pet_enabled;
+    replacement.active_pet.clone_from(&current.active_pet);
+    replacement.pet_size = current.pet_size;
     replacement
 }
 
-/// 兼容旧调用方的整对象写入，但始终保留锁内读到的最新缩放与关窗动作，避免
-/// 长流程用陈旧 `Setting` 覆盖刚刚由快捷键 / 设置界面写入的值（丢更新）。
+/// 兼容旧调用方的整对象写入，但始终保留锁内读到的最新缩放、关窗动作与桌宠
+/// 持久字段，避免长流程用陈旧 `Setting` 覆盖精确更新路径刚写入的值（丢更新）。
 pub fn set_store_dat_setting(app_handle: &AppHandle, mut setting: Setting) {
     let value = {
         let _guard = setting_write_lock()
@@ -703,17 +716,27 @@ mod tests {
         let mut stale = Setting::default();
         stale.zoom_factor = 0.8;
         stale.close_action = "quit".to_string();
+        stale.pet_enabled = false;
+        stale.active_pet = Some("chat:stale".to_string());
+        stale.pet_size = Some(80.0);
 
         let mut current = Setting::default();
         current.zoom_factor = 1.6;
         current.close_action = "tray".to_string();
+        current.pet_enabled = true;
+        current.active_pet = Some("codex:latest".to_string());
+        current.pet_size = Some(140.0);
 
         let merged = preserve_persisted_fields(stale, &current);
 
         assert_eq!(merged.zoom_factor, 1.6);
+        assert_eq!(merged.close_action, "tray");
+        assert!(merged.pet_enabled);
+        assert_eq!(merged.active_pet.as_deref(), Some("codex:latest"));
         assert_eq!(
-            merged.close_action, "tray",
-            "整对象写入不得用陈旧值覆盖锁内读到的最新关窗动作"
+            merged.pet_size,
+            Some(140.0),
+            "整对象写入不得覆盖最新桌宠字段"
         );
     }
 
@@ -892,5 +915,21 @@ mod tests {
 
         assert_eq!(setting.connected_connection_ids, ["external-1"]);
         assert!(setting.connection_selection_initialized);
+    }
+
+    #[test]
+    fn pet_defaults_closed_and_legacy_enabled_value_survives() {
+        assert!(!Setting::default().pet_enabled, "新安装必须默认关闭桌宠");
+
+        let legacy: Setting = serde_json::from_value(serde_json::json!({
+            "installed": true,
+            "port": 3080,
+            "auto_start": true,
+            "language": "zh-CN",
+            "pet_enabled": true,
+            "pet_visible": false
+        }))
+        .expect("legacy setting should deserialize");
+        assert!(legacy.pet_enabled, "旧版临时隐藏字段不得关闭永久启用状态");
     }
 }

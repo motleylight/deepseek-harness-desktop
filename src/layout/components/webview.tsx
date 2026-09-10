@@ -5,6 +5,7 @@ import { useStore } from 'valtio-define'
 import { PluginRecovery } from '@/components/plugin-recovery'
 import { useAppConfig } from '@/hooks/use-app-config'
 import { useDesktopZoom } from '@/hooks/use-desktop-zoom'
+import { useIframeInvoke } from '@/hooks/use-iframe-invoke'
 import { useIframeShim } from '@/hooks/use-iframe-shim'
 import { store } from '@/store'
 import { Navbar } from './navbar'
@@ -34,6 +35,7 @@ export function Webview() {
 
   useDesktopZoom(iframeRef)
   useIframeShim(iframeRef, true)
+  useIframeInvoke(iframeRef)
 
   if (status === 'error') {
     return (

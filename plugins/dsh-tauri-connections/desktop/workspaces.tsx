@@ -123,15 +123,27 @@ function ExternalDshWorkspace({
     onReady(connection.id)
   }
 
+  useEvent('dsh-connection-authenticated', (event: Event) => {
+    if ((event as CustomEvent<string>).detail === connection.url)
+      retry()
+  })
+
   useEffect(() => {
     let disposed = false
     statusChangeRef.current(connection.id, { state: 'checking' })
-    const probe = connection.transport === 'ssh' ? Promise.resolve(connection.url) : invoke<string>('probe_dsh_connection', { url: connection.url })
+    let lease: string | undefined
+    const release = (url: string) => invoke('dsh_ssh_request', { method: 'connection-close', params: { id: connection.id, lease: url } }).catch(() => {})
+    const probe = connection.transport === 'ssh' ? Promise.resolve(connection.url) : invoke<string>('dsh_ssh_request', { method: 'connection-open', params: { id: connection.id, url: connection.url } })
     void probe
-      .then(() => {
-        if (disposed)
+      .then((url) => {
+        if (connection.transport !== 'ssh')
+          lease = url
+        if (disposed) {
+          if (lease !== undefined)
+            void release(lease)
           return
-        setIframeSrc(timestampedExternalIframeUrl(connection.url))
+        }
+        setIframeSrc(timestampedExternalIframeUrl(url))
         setStatus('ready')
       })
       .catch((reason) => {
@@ -144,6 +156,8 @@ function ExternalDshWorkspace({
       })
     return () => {
       disposed = true
+      if (lease !== undefined)
+        void release(lease)
       frameChangeRef.current(connection.id, null)
       statusChangeRef.current(connection.id, null)
     }
@@ -245,7 +259,7 @@ export function DshWorkspaces({
   function refreshExternalWorkspace(id: string) {
     const connection = connectedConnections.find(item => item.id === id)
     const frame = externalFramesRef.current[id]
-    const origin = connection && externalOrigin(connection.url)
+    const origin = frame && externalOrigin(frame.src)
     if (!connection || !frame?.contentWindow || !origin)
       return
     frame.contentWindow.postMessage(
@@ -468,7 +482,7 @@ export function DshWorkspaces({
     const connection = connectedConnections.find(item => (
       externalFramesRef.current[item.id]?.contentWindow === event.source
     ))
-    if (!connection || event.origin !== externalOrigin(connection.url))
+    if (!connection || event.origin !== externalOrigin(externalFramesRef.current[connection.id]?.src ?? ''))
       return
     if (data.type === 'dsh://external-workspace:open-failed') {
       setStatus(connection.id, { state: 'error', message: t('connections.open_failed') })
@@ -509,7 +523,7 @@ export function DshWorkspaces({
       const { connectedConnections, setStatus, t } = refreshStateRef.current
       connectedConnections.forEach((connection) => {
         const frame = externalFramesRef.current[connection.id]
-        const origin = externalOrigin(connection.url)
+        const origin = frame && externalOrigin(frame.src)
         if (!frame?.contentWindow || !origin)
           return
         if (Date.now() - (lastResponseRef.current[connection.id] ?? Date.now()) > 30000)

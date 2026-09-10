@@ -18,7 +18,7 @@ pub const DSH_CORE_URL: &str =
     "https://github.com/dsh-tauri-desk/deepseek-harness-pkg/releases/latest/download/";
 
 /// Windows 桌面发行线验收的 OpenCode 主会话核心。
-pub const DSH_WINDOWS_CORE_TAG: &str = "dsh-v0.1.1-rc.4";
+pub const DSH_WINDOWS_CORE_TAG: &str = "dsh-v0.1.5-rc.1";
 
 /// GitHub Release 的 ghfast.top 中转前缀（透传官方 URL，下载内容一致、
 /// 仍可做 SHA-256 完整性校验），用作官方直连失败时的兜底镜像。
@@ -96,6 +96,8 @@ pub const STORE_DAT_DEV_FILE: &str = ".store.dev.dat";
 pub const STORE_SETTING_KEY: &str = "setting";
 /// Store 中记录主窗口几何（位置/大小/最大化）的键
 pub const STORE_WINDOW_STATE_KEY: &str = "window_state";
+/// Store 中记录桌宠（外置透明宠物窗口）几何（位置/大小）的键
+pub const STORE_PET_WINDOW_STATE_KEY: &str = "pet_window_state";
 
 /// 健康检查超时
 pub const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);

@@ -10,4 +10,5 @@ pub mod profile;
 pub mod scheduler;
 pub mod ssh_host;
 pub mod update;
+pub(crate) mod user_path;
 pub mod workflow;

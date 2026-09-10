@@ -5,12 +5,18 @@
 //! 桌面端把「当前使用哪个档案」持久化在自己的 store 设置（`active_profile`，
 //! 默认 `web`），服务启动、插件安装/升级/卸载全部以它为准——不再写死 web。
 //!
+//! 首装防御：桌面端首次安装（本进程启动前 store 文件不存在）时，在任何 dsh
+//! 启动/插件操作之前自动新建独立的 Desktop 档案并切换过去（见
+//! `ensure_first_run_desktop_profile`）。此前装过 dsh CLI 并装了大量插件/补丁的
+//! 用户启用桌面端时，旧数据不再涌入桌面端所用档案，防御性规避加载异常。
+//!
 //! 新建档案时按官方 `dsh-app-boot` 的 `initProfile` 形态初始化目录：
 //! `package.json`（含 web 模板 bundles）+ `cordis.patch.yml` + `pnpm-workspace.yaml`，
 //! 与 CLI 侧产物完全一致，两边可互相操作。
 
 use crate::config;
 use crate::service::fs_guard;
+use rayon::prelude::*;
 use serde::Serialize;
 use serde_yaml::Value;
 use std::fs;
@@ -19,6 +25,15 @@ use tauri::AppHandle;
 
 /// 桌面端默认档案（内置，不可删除）
 pub const DEFAULT_PROFILE: &str = "web";
+
+/// 首装引导档案：桌面端首次安装时自动新建并切换为当前档案（与 CLI 用户既有
+/// 档案隔离；用户新建同 id 档案被 `PROFILE_EXISTS` 拦截，此名仅由本引导占用）。
+pub const DESKTOP_PROFILE: &str = "desktop";
+
+/// 安全模式档案：仅加载 web 模板核心 bundles、不带任何用户插件/补丁层。
+/// 错误界面「安全模式」按钮切到此档案重启（`--profile safe`），隔离问题插件
+/// 让应用先可用，用户随后在档案列表切回原档案即退出安全模式。
+pub const SAFE_PROFILE: &str = "safe";
 
 /// 新建档案的初始 bundles：web 模板（`@deepseek-ai/dsh-base` +
 /// `@deepseek-ai/dsh-web-app`，与 dsh-app-boot `PROFILE_TEMPLATES.web` 一致）。
@@ -251,6 +266,64 @@ pub fn set_active(app_handle: &AppHandle, id: &str) -> Result<Profile, String> {
         .ok_or_else(|| "PROFILE_NOT_FOUND: profile disappeared after switch".to_string())
 }
 
+/// 确保首装引导档案目录存在（以 `profiles_root` 注入，便于单测）。
+///
+/// 幂等且绝不覆盖：目录已存在（含 CLI 侧手动创建的同名档案）时直接复用；
+/// 缺失时按官方 `initProfile` 形态初始化（web 模板 bundles，可正常渲染桌面
+/// 内嵌的 web UI）。
+fn ensure_desktop_profile_with_root(profiles_root: &Path) -> Result<(), String> {
+    let dir = profiles_root.join(DESKTOP_PROFILE);
+    if dir.is_dir() {
+        return Ok(());
+    }
+    init_profile_dir(&dir, DESKTOP_PROFILE)
+}
+
+/// 首装档案引导：桌面端首次安装时新建独立的 Desktop 档案并切换为当前档案。
+///
+/// 为什么：此前装过 dsh CLI 并装了大量插件/补丁的用户，启用桌面端时这些旧
+/// 数据会涌入桌面端所用档案导致加载异常；首装即隔离到干净档案可防御性规避。
+/// 老用户（store 已存在）绝不动其档案选择。幂等 + 最佳努力：已引导过
+/// （`desktop_profile_ready`）或任何一步失败时跳过并告警，回落 web 档案的
+/// 老行为，绝不阻断启动。调用时机：desktop::setup（前端可操作之前，让安装
+/// 向导/预装插件/内置插件全部落进 Desktop 档案）与 launch（spawn dsh 前重试）。
+pub fn ensure_first_run_desktop_profile(app_handle: &AppHandle) {
+    if !config::is_first_install() {
+        return;
+    }
+    if config::get_store_dat_setting(app_handle).desktop_profile_ready {
+        return;
+    }
+    let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
+    if let Err(e) = ensure_desktop_profile_with_root(&profiles_root) {
+        log::warn!("first-run Desktop profile init failed: {e}");
+        return;
+    }
+    if let Err(e) = set_active(app_handle, DESKTOP_PROFILE) {
+        log::warn!("first-run Desktop profile switch failed: {e}");
+        return;
+    }
+    config::update_store_dat_setting(app_handle, |setting| {
+        setting.desktop_profile_ready = true;
+    });
+    log::info!("First-run bootstrap: Desktop profile created and activated ({DESKTOP_PROFILE})");
+}
+
+/// 确保安全模式档案目录存在（幂等，绝不覆盖）。
+///
+/// 与 `ensure_desktop_profile_with_root` 同构：缺失时按官方 `initProfile` 形态
+/// 初始化（web 模板 bundles，可正常渲染桌面内嵌的 web UI），已存在时直接复用。
+/// 安全档案只含核心 bundles 与空 patch 层——不装任何用户插件，用于错误界面
+/// 「安全模式」按钮把问题插件隔离在启动链路之外。
+pub fn ensure_safe_profile(app_handle: &AppHandle) -> Result<(), String> {
+    let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
+    let dir = profiles_root.join(SAFE_PROFILE);
+    if dir.is_dir() {
+        return Ok(());
+    }
+    init_profile_dir(&dir, SAFE_PROFILE)
+}
+
 /// 删除档案（默认档案与使用中的档案不可删除）。
 pub fn remove(app_handle: &AppHandle, id: &str) -> Result<(), String> {
     if id == DEFAULT_PROFILE {
@@ -357,30 +430,57 @@ fn next_profile_id(profiles_root: &Path, base: &str) -> Result<String, String> {
 }
 
 /// 递归复制目录树到全新目标（跳过 profile 根下隐藏目录，保留 `.npmrc`）。
+///
+/// 顶层目录串行创建后，同级条目用 rayon `par_iter` 并行处理：目录递归、文件
+/// `fs::copy` 并发执行，大幅加速大档案（含 node_modules）的克隆。
 fn copy_dir_tree(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("COPY_MKDIR: {e}"))?;
-    for entry in fs::read_dir(src).map_err(|e| format!("COPY_READ: {e}"))? {
-        let entry = entry.map_err(|e| format!("COPY_ENTRY: {e}"))?;
+    let read_dir = fs::read_dir(src).map_err(|e| format!("COPY_READ: {e}"))?;
+    let entries: Vec<_> = read_dir
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("COPY_ENTRY: {e}"))?;
+    entries.par_iter().try_for_each(|entry| -> Result<(), String> {
         let name = entry.file_name();
+        // 仅跳过运行时产物（不随克隆迁移）
         if let Some(s) = name.to_str() {
-            if s.starts_with('.') && s != ".npmrc" {
-                let path = entry.path();
-                // 跳过隐藏目录（如 .dsh、.pnpm 内部）
-                if path.is_dir() {
-                    continue;
-                }
-                // 隐藏文件（非 .npmrc）跳过
-                continue;
+            if s == ".harness.pid" || s == ".backups" {
+                return Ok(());
             }
         }
         let src_path = entry.path();
         let dst_path = dst.join(&name);
         let ty = entry.file_type().map_err(|e| format!("COPY_TYPE: {e}"))?;
-        if ty.is_dir() {
+        if ty.is_symlink() {
+            // 保留符号链接原样（如 node_modules/.bin 下的可执行链接）
+            let target = std::fs::read_link(&src_path)
+                .map_err(|e| format!("COPY_LINK_READ: {e}"))?;
+            copy_symlink(&target, &dst_path)?;
+        } else if ty.is_dir() {
             copy_dir_tree(&src_path, &dst_path)?;
         } else if ty.is_file() {
             fs::copy(&src_path, &dst_path).map_err(|e| format!("COPY_FILE: {e}"))?;
         }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// 在目标位置重建一条符号链接（指向原链接相同的目标）。
+#[cfg(unix)]
+fn copy_symlink(target: &std::path::Path, dst: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(target, dst)
+        .map_err(|e| format!("COPY_LINK_CREATE: {e}"))
+}
+
+/// 在目标位置重建一条符号链接（Windows 下需要权限，best-effort）。
+#[cfg(windows)]
+fn copy_symlink(target: &std::path::Path, dst: &Path) -> Result<(), String> {
+    // Windows 符号链接需要管理员权限，目录联接不需要但仅限目录。
+    // best-effort：失败不阻断克隆，仅记录告警。
+    if dst.parent().is_some() {
+        let _ = std::os::windows::fs::symlink_dir(target, dst)
+            .or_else(|_| std::os::windows::fs::symlink_file(target, dst))
+            .map_err(|e| log::warn!("copy_symlink failed for {}: {e}", dst.display()));
     }
     Ok(())
 }
@@ -644,6 +744,39 @@ mod tests {
         assert_eq!(npmrc, npmrc2);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 首装引导档案：初始化产物与官方 initProfile 形态一致，且已存在时绝不覆盖。
+    #[test]
+    fn desktop_bootstrap_creates_official_shape_once() {
+        let tmp = std::env::temp_dir().join(format!("dsh-profile-desktop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let root = tmp.join("profiles");
+
+        ensure_desktop_profile_with_root(&root).unwrap();
+        let dir = root.join(DESKTOP_PROFILE);
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["name"], "dsh-profile-desktop");
+        assert_eq!(
+            manifest["dsh"]["profile"]["bundles"],
+            serde_json::json!(["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"])
+        );
+        assert!(dir.join("cordis.patch.yml").is_file());
+        assert!(dir.join("pnpm-workspace.yaml").is_file());
+        let npmrc = std::fs::read_to_string(dir.join(".npmrc")).unwrap();
+        assert!(npmrc.contains("confirmModulesPurge=false"));
+
+        // 幂等：目录已存在时直接复用，绝不覆盖用户改动
+        std::fs::write(dir.join("cordis.patch.yml"), "# user edit\n[]\n").unwrap();
+        ensure_desktop_profile_with_root(&root).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap(),
+            "# user edit\n[]\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// 路径穿越回归：`..`、`.`、绝对路径、含分隔符的 id 一律在 remove 前被拦截，

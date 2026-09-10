@@ -1,5 +1,7 @@
 # DSH SSH 管理
 
+远端探测加载登录用户 shell 的交互初始化，必要时补读登录初始化，提取 PATH 后交给 DSH 探测及启动。Bash 的交互初始化包含 `.bashrc`。此步骤需要 Linux 的 `timeout` 和 `setsid`，每次 shell 初始化限时 10 秒、输出上限 64 KiB；杂音不进入消息协议，失败明确报告扫描失败，不据此断言软件未安装。用户 shell 初始化脚本本身可能产生副作用。别名和 shell 函数不作为安装路径；请提供 PATH 中的实际可执行文件。
+
 随 Desktop 安装包提供的 DSH 插件。`desktop` 入口提供配置页，`SshManager` 同时作为 Cordis 服务和 Desktop 标准输入输出宿主的实现；Rust 只负责宿主进程与消息转发。
 
 在「配置 → 应用 → DSH 连接」添加 Linux 主机或 SSH Host 别名。用户名和 SSH 端口留空时继承系统 SSH 配置。使用系统 OpenSSH、默认密钥、ssh-agent、ProxyJump 和 known_hosts，不读取或保存私钥内容。必须先在终端完成主机指纹确认、密钥解锁等交互，支持 `ssh -o BatchMode=yes` 的连接。插件不绕过主机密钥校验。

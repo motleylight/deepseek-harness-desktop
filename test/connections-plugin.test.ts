@@ -121,7 +121,9 @@ describe('connection plugin lifecycle and workspace routing', () => {
   })
 
   it('keeps row creation scoped to its own connection and workspace rather than the selected toolbar target', async () => {
-    apply({ effect(start: () => () => void) { dispose = start() } })
+    apply({ effect(start: () => () => void) {
+      dispose = start()
+    } })
     const message = state()
     Object.assign(message.state.labels, { toolbar: { 'new-session': 'New session · Development', 'add-workspace': 'Add workspace · Development' } })
     send(message)
@@ -139,7 +141,9 @@ describe('connection plugin lifecycle and workspace routing', () => {
     const managed = { phase: 'ready', items: [{ workspaceId: 'same-id', title: 'Local workspace', path: '/local', sessionIds: ['same-session-id'] }], archivedSessionIds: [] }
     const sessions = { phase: 'ready', ids: ['same-session-id'], current: 'same-session-id', byId: { 'same-session-id': { displayTitle: 'Local session', updatedAt: 3, running: true } } }
     const source = (snapshot: unknown) => ({ getSnapshot: () => snapshot, subscribe: () => () => {} })
-    apply({ sessions: { list: source(sessions) }, workspaces: { list: source(managed) }, effect(start: () => () => void) { dispose = start() } })
+    apply({ sessions: { list: source(sessions) }, workspaces: { list: source(managed) }, effect(start: () => () => void) {
+      dispose = start()
+    } })
     const message = state()
     Object.assign(message.state.labels, { renameSession: 'Rename session', forkSession: 'Fork session', archiveSession: 'Archive session', running: 'Running', completed: 'Completed' })
     send(message)

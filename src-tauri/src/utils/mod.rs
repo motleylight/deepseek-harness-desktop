@@ -66,6 +66,19 @@ pub fn patch_dsh(
     Ok(())
 }
 
+/// 判定活动核心安装目录下的某个 dsh 包文件是否包含给定子串。
+///
+/// 用于「按能力追加启动参数」：例如 web 启动命令已具备 `--skip-auth`（本工具已打
+/// 过补丁或上游官方合并）才向服务参数追加该标志。目标不存在或读取失败一律视为
+/// 不包含，调用方据此保守不传标志。
+pub fn dsh_rel_contains(app_handle: &tauri::AppHandle, rel_path: &str, needle: &str) -> bool {
+    let target = active_core_install_dir(app_handle).join(rel_path);
+    match std::fs::read_to_string(&target) {
+        Ok(content) => content.contains(needle),
+        Err(_) => false,
+    }
+}
+
 pub fn show_window<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.unminimize();
     let _ = window.show();

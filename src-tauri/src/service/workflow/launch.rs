@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
 #[cfg(not(windows))]
+use std::io::Read;
+#[cfg(not(windows))]
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
 
@@ -27,6 +29,18 @@ use super::sweep::persist_harness_pid;
 use super::sweep::{dsh_bin_open_error, relaunch_marker_path, relaunch_via_shell_escape};
 use super::utils::{is_port_in_use, rotate_service_log, spawn_output_readers};
 use super::win_inspector;
+
+#[cfg(windows)]
+type SpawnResult = std::io::Result<(Option<std::fs::File>, Option<std::fs::File>, u32)>;
+#[cfg(unix)]
+type SpawnResult = Result<
+    (
+        Option<std::process::ChildStdout>,
+        Option<std::process::ChildStderr>,
+        u32,
+    ),
+    String,
+>;
 
 /// 端口释放等待上限：刚结束/清扫过上个会话的残留 dsh 进程后，TCP 端口释放
 /// 存在短暂滞后（taskkill 返回 ≠ 端口已可复用）。等待窗口内端口回落为空闲则
@@ -337,6 +351,24 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     fs::create_dir_all(&dsh_home)
         .map_err(|e| format!("DSH_HOME_MKDIR_FAILED: create dsh home failed: {e}"))?;
 
+    // 首装档案引导重试：desktop::setup 的引导若失败（磁盘/权限抖动），在真正
+    // spawn dsh 前再补一次；幂等，已就绪时直接跳过。最佳努力：失败只告警，
+    // 不阻断启动（回落 web 档案的老行为）。
+    crate::service::profile::ensure_first_run_desktop_profile(&app_handle);
+
+    // 安全模式：安全档案的契约是「只加载 web 模板核心 bundles、不带任何用户插件」，
+    // 但档案目录一旦存在就绝不重建（用户可能反复进出安全模式），而内置插件自愈与
+    // 首次引导安装都作用于「当时的活动档案」，于是安全档案里会累积用户插件——它们
+    // 往往正是启动失败的元凶，不清干净的话每次进入安全模式都带着同一批插件重启，
+    // 隔离形同虚设。必须在 spawn dsh 之前做（服务未运行时改清单、删 node_modules
+    // 目录才安全），且要早于下面的 win_inspector::apply：apply 依据「插件是否装入
+    // profile」决定挂载还是清理 patch 行，先清插件才能让遗留挂载行被正确剥离。
+    // 内置插件与核心包由被调方保留；非安全档案直接跳过。最佳努力：失败只告警，
+    // 不阻断启动（清理不彻底只是隔离效果打折，启动阻塞则让应用彻底不可用）。
+    if let Err(e) = crate::service::plugin::purge_user_plugins_in_safe_profile(&app_handle) {
+        log::warn!("safe mode user plugin purge failed: {e}");
+    }
+
     // Linux 起步前探测 inotify 监视上限：harness 服务（dsh web）用 chokidar 递归
     // 监视 profile 目录，上限过低会在启动一瞬间抛 ENOSPC 直接退出（issue #116）。
     // 进程无法自我调高该参数，这里只做告警（启动日志 + 读取 run logs 中的环境信息），
@@ -350,11 +382,12 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
         log::warn!("win32 terminal support apply failed: {e}");
     }
     // alpha 的 iframe 无法稳定完成 SameSite=Strict browser-session Cookie 交换：
-    // 仅命中 alpha 鉴权锚点时跳过 browser-session 层，但保留 Host/Origin fence；
-    // 旧核心无 alpha 锚点，patch_dsh 会安全跳过，不改变旧版行为。
-    // if let Err(e) = crate::service::patch::alpha_auth::apply(&app_handle) {
-    //     log::warn!("alpha embedded auth patch failed: {e}");
-    // }
+    // 补丁让 dsh 接受 `--skip-auth`，仅在桌面端显式传该标志时跳过 browser-session
+    // 层（保留 Host/Origin fence）；普通 `dsh web` 不受影响。旧核心无锚点时
+    // patch_dsh 安全跳过，不改变旧版行为。
+    if let Err(e) = crate::service::patch::alpha_auth::apply(&app_handle) {
+        log::warn!("alpha --skip-auth patch failed: {e}");
+    }
     // renderer 的 SlotOutlet 一行导出补丁（dsh-tauri-ui 设置侧边栏依赖）：只补
     // 活动核心的 dsh-client-ui-renderer lib/client.js，已含导出即跳过（幂等；核心
     // 换版本后自动重打，上游官方导出后自动退休）。最佳努力：失败只告警，不阻断
@@ -394,7 +427,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 内置插件自愈：随包分发的内置插件（dsh-tauri 等）必须在服务进程加载插件
     // 前就绪——核对「已安装 + 安装路径指向当前捆绑目录」，未安装、路径不正确
     // 或用户卸载后重启，一律强制重装（见 service::plugin::internal）。最佳
-    // 努力：失败只告警，不阻断启动（核心功能缺失是发布缺陷，由 prebuild 报错）。
+    // 努力：失败只告警，不阻断启动（核心功能缺失是发布缺陷，由 build:plugins 报错）。
     if let Err(e) = crate::service::plugin::ensure_internal_plugins(&app_handle).await {
         log::warn!("ensure internal plugins failed: {e}");
     }
@@ -405,6 +438,26 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // （启动失败场景由前端 recovery 对话框兜底，见 service::plugin::recovery）。
     if let Err(e) = crate::service::plugin::ensure_preset_plugins(&app_handle).await {
         log::warn!("ensure preset plugins failed: {e}");
+    }
+    // 预打包核心运行时自愈：把 app 内置插件与 profile 插件入口链接进活动核心的
+    // node_modules（dsh 的 loader 以核心根为裸包解析根），并核验/修复 sharp/koffi
+    // 原生可选依赖。只作用于 CoreSource::App，本地核心由用户自行管理。dsh 在缺失
+    // 这些入口或原生依赖时无法启动，因此失败直接阻断本次 launch（前端展示可恢复
+    // 错误），而不是带着必然失败的核心继续 spawn。
+    if let Err(e) = crate::service::core::prepare_active_runtime(&app_handle).await {
+        log::error!("prepare active core runtime failed: {e}");
+        return Err(e);
+    }
+    // prepare 可能因核心原生模块的 ABI 与本地 node 不匹配而改用捆绑运行时
+    // （issue #441），此时必须重新解析：下面的 DSH_NODE 注入与 PATH 前置都以
+    // 这里的结果为准，否则子进程仍会用那个加载不了原生模块的本地 node。
+    let node_binary_path = config::get_node_binary_path(&app_handle);
+    if !node_binary_path.exists() {
+        log::error!("Node.js runtime resolved for launch is missing");
+        return Err(format!(
+            "NODE_NOT_FOUND: Node.js runtime is missing: {}",
+            node_binary_path.display()
+        ));
     }
     let mut envs: HashMap<String, String> = HashMap::new();
     envs.insert(
@@ -496,6 +549,12 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // 浏览器，追加 `--no-open` 关闭（老版本无此标志时按版本判定不传）。
     let no_open = web_supports_no_open_flag(&app_handle, &dsh_binary_path);
 
+    // 版本判定打不到 alpha 的 web-startup 选项表（见 web_supports_no_open_flag）。
+    // alpha 的浏览器会话 Cookie 在沙箱跨源 iframe 上下文无法完成交换，因此桌面端
+    // 显式追加 `--skip-auth`：只有核心（经上面的 alpha_auth 补丁，或上游官方合并）
+    // 确实支持该标志才传，避免旧核心把未知选项当成错误退出。
+    let skip_auth = crate::service::patch::alpha_auth::web_startup_supports_skip_auth(&app_handle);
+
     log::info!("Starting Harness process");
 
     // dsh 的 Loader 在插件 dispose 时会把组合后的整棵 entry 树回写进
@@ -512,7 +571,7 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
     // node 会让 dsh 派生的子进程各自新建可见控制台窗口（频繁闪烁 cmd 黑窗），
     // 因此 Windows 上改用“隐藏控制台”方式启动，见 win_spawn 模块。
     let active_profile = crate::service::profile::active_profile(&app_handle);
-    let spawn_result = {
+    let spawn_result: SpawnResult = {
         #[cfg(windows)]
         {
             use std::io::{BufReader, Read};
@@ -525,13 +584,14 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
                 dsh_binary_path.as_os_str().to_os_string(),
                 OsString::from("--profile"),
                 OsString::from(active_profile.as_str()),
-                OsString::from("--host"),
-                OsString::from("127.0.0.1"),
                 OsString::from("--port"),
                 OsString::from(setting.port.to_string()),
             ];
             if no_open {
                 args.push(OsString::from("--no-open"));
+            }
+            if skip_auth {
+                args.push(OsString::from("--skip-auth"));
             }
 
             // 只负责 spawn 并返回管道/PID/句柄：探测与重试期间不登记、不挂
@@ -638,12 +698,13 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
             cmd.arg(&dsh_binary_path)
                 .arg("--profile")
                 .arg(active_profile.as_str())
-                .arg("--host")
-                .arg("127.0.0.1")
                 .arg("--port")
                 .arg(&setting.port.to_string());
             if no_open {
                 cmd.arg("--no-open");
+            }
+            if skip_auth {
+                cmd.arg("--skip-auth");
             }
             cmd.envs(&envs)
                 .current_dir(config::get_dsh_install_path(&app_handle))
@@ -654,21 +715,78 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
                 .stderr(Stdio::piped())
                 // 独立进程组让停止操作只影响 Harness 及其后代。
                 .process_group(0);
-            cmd.spawn().map(|mut child| {
-                let pid = child.id();
-                let stdout = child.stdout.take();
-                let stderr = child.stderr.take();
-                set_owned_process(pid);
-                let exit_app_handle = app_handle.clone();
-                std::thread::spawn(move || {
-                    let code = child.wait().ok().and_then(|status| status.code());
-                    // 进程确已退出：清空持有 PID 并把 Status 从 Running 回落为 Stopped
-                    // （Unix 无进程句柄可关闭，忽略返回的进程记录）。
-                    // 仅当该 PID 仍是当前登记才取出——旧监视线程不会误清新进程。
-                    let _ = on_owned_process_exit(&exit_app_handle, pid, |_| code.map(i64::from));
-                });
-                (stdout, stderr, pid)
-            })
+            let mut attempt = 0u32;
+            let mut child = 'attempts: loop {
+                attempt += 1;
+                match cmd.spawn() {
+                    Ok(mut child) => {
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_millis(2500);
+                        loop {
+                            match child.try_wait() {
+                                Ok(Some(exit)) => {
+                                    let mut stderr_text = String::new();
+                                    if let Some(mut stderr) = child.stderr.take() {
+                                        let _ = stderr.read_to_string(&mut stderr_text);
+                                    }
+                                    if exit.code() == Some(1)
+                                        && stderr_text.contains("duplicate loader entry")
+                                        && attempt < 3
+                                    {
+                                        log::warn!(
+                                            "DUPLICATE_LOADER_ENTRY: dsh exited early with duplicate loader entry \
+                                             (pid={}, code=1); resetting profile root and relaunching \
+                                             (attempt {attempt}/3)",
+                                            child.id()
+                                        );
+                                        reset_active_profile_root(&app_handle);
+                                        cmd = Command::new(&node_binary_path);
+                                        cmd.arg(&dsh_binary_path)
+                                            .arg("--profile")
+                                            .arg(active_profile.as_str())
+                                            .arg("--port")
+                                            .arg(setting.port.to_string());
+                                        if no_open {
+                                            cmd.arg("--no-open");
+                                        }
+                                        if skip_auth {
+                                            cmd.arg("--skip-auth");
+                                        }
+                                        cmd.envs(&envs)
+                                            .current_dir(config::get_dsh_install_path(&app_handle))
+                                            .stdin(Stdio::null())
+                                            .stdout(Stdio::piped())
+                                            .stderr(Stdio::piped())
+                                            .process_group(0);
+                                        continue 'attempts;
+                                    }
+                                    for line in stderr_text.lines() {
+                                        log::warn!(target: "dsh", "{}", line);
+                                    }
+                                    return Err(format!("Harness exited early: {exit}"));
+                                }
+                                Ok(None) if std::time::Instant::now() >= deadline => break,
+                                Ok(None) => {
+                                    std::thread::sleep(std::time::Duration::from_millis(50))
+                                }
+                                Err(error) => return Err(error.to_string()),
+                            }
+                        }
+                        break child;
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
+            };
+            let pid = child.id();
+            let stdout = child.stdout.take();
+            let stderr = child.stderr.take();
+            set_owned_process(pid);
+            let exit_app_handle = app_handle.clone();
+            std::thread::spawn(move || {
+                let code = child.wait().ok().and_then(|status| status.code());
+                let _ = on_owned_process_exit(&exit_app_handle, pid, |_| code.map(i64::from));
+            });
+            Ok((stdout, stderr, pid))
         }
     };
 

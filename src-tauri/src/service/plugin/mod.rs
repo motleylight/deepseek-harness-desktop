@@ -24,6 +24,8 @@
 //!   以及启动时对 `resources/deprecated-plugins.json` 登记的社区插件自动卸载
 //! - [`errors`]：插件错误记录（安装/升级/卸载失败 + 页面运行期上报，持久化）
 //! - [`process`]：dsh 子进程启动与输出流逐行转发
+//! - [`recovery`]：插件异常定位与一键离线卸载
+//! - [`safe`]：安全档案启动前的用户插件清除（只留内置插件与核心包）
 //! - [`cancel`]：Windows 下取消正在进行的安装
 //! - [`watch`]：已安装插件文件监控（轮询指纹比对 + `dsh-plugins-updated` 事件推送）
 
@@ -36,6 +38,8 @@ mod internal;
 mod preset;
 mod process;
 pub mod recovery;
+mod safe;
+pub mod snapshot;
 pub mod update;
 pub mod verify;
 pub mod watch;
@@ -46,12 +50,16 @@ pub use disable::{disable, enable};
 pub(crate) use install::harness_prefer_bundled_pnpm;
 pub(crate) use install::uninstall_deprecated_plugins;
 pub use install::{install, remove, update};
-pub(crate) use installed::ensure_profile_npmrc;
+pub(crate) use installed::{ensure_profile_npmrc, installed_name, list_installed, profile_dir};
 pub use installed::{list, PreinstallPlugin};
 pub(crate) use internal::cancel as cancel_internal_plugins;
 pub(crate) use internal::ensure as ensure_internal_plugins;
 pub use preset::repo_url_of;
-pub(crate) use preset::{current_preset_hash, preinstall_pending, remove_legacy_bundled_plugins};
+pub(crate) use preset::{
+    bundled_plugin_dir, current_preset_hash, load_presets, preinstall_pending,
+    remove_legacy_bundled_plugins,
+};
+pub(crate) use safe::purge_user_plugins_in_safe_profile;
 pub use recovery::{
     detect as detect_recovery, uninstall as uninstall_recovery, PluginRecoveryInfo,
 };

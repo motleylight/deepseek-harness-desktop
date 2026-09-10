@@ -44,7 +44,7 @@ fn launch(app: &AppHandle) -> Result<Arc<Host>, String> {
         .path()
         .resource_dir()
         .map_err(|e| format!("SSH_RESOURCE: {e}"))?
-        .join("resources/internal-plugins/dsh-tauri-ssh/src/worker.js");
+        .join("resources/node_modules/dsh-tauri-ssh/src/worker.js");
     #[cfg(debug_assertions)]
     let resource = if resource.exists() {
         resource
@@ -127,7 +127,7 @@ fn launch(app: &AppHandle) -> Result<Arc<Host>, String> {
 
 /// 请求只进入随包插件；不提供任意程序或脚本执行入口。
 pub async fn request(app: AppHandle, method: String, params: Value) -> Reply {
-    if !["list", "save", "remove", "enable", "operation"].contains(&method.as_str()) {
+    if !["list", "save", "remove", "enable", "operation", "connection-probe", "connection-open", "connection-close"].contains(&method.as_str()) {
         return Err("SSH_METHOD_INVALID".into());
     }
     let host = launch(&app)?;

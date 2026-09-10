@@ -1,8 +1,10 @@
 import process from 'node:process'
 import { createInterface } from 'node:readline'
+import { DirectConnections } from './direct-connections.js'
 import { SshManager } from './manager.js'
 
 const manager = new SshManager({ storagePath: process.argv[2] })
+const connections = new DirectConnections()
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity })
 input.on('line', async (line) => {
   let request
@@ -12,7 +14,13 @@ input.on('line', async (line) => {
     request = JSON.parse(line)
     const { method, params = {} } = request
     let value
-    if (method === 'list')
+    if (method === 'connection-probe')
+      value = await connections.probe(params.url)
+    else if (method === 'connection-open')
+      value = await connections.open(params.id, params.url)
+    else if (method === 'connection-close')
+      value = await connections.close(params.id, params.lease)
+    else if (method === 'list')
       value = await manager.list()
     else if (method === 'save')
       value = await manager.save(params)
@@ -31,6 +39,7 @@ input.on('line', async (line) => {
   }
 })
 input.once('close', async () => {
+  await connections.dispose()
   await manager.dispose()
   process.exit(0)
 })

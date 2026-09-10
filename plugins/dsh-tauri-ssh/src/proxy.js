@@ -4,12 +4,12 @@ import http from 'node:http'
 import httpProxy from 'http-proxy'
 
 /** Keeps DSH's authority-bound cookie outside a cross-site Desktop iframe. */
-export async function createDshProxy({ port = 0, tunnelPort, remotePort, cookie = '' }) {
+export async function createDshProxy({ port = 0, tunnelPort, remotePort, cookie = '', target, authority }) {
   const token = randomBytes(32).toString('hex')
-  const remoteOrigin = `http://127.0.0.1:${remotePort}`
+  const remoteOrigin = authority ?? `http://127.0.0.1:${remotePort}`
   let origin
   const sockets = new Set()
-  const proxy = httpProxy.createProxyServer({ target: `http://127.0.0.1:${tunnelPort}`, ws: true, headers: { host: `127.0.0.1:${remotePort}`, origin: remoteOrigin, ...(cookie ? { cookie } : {}) } })
+  const proxy = httpProxy.createProxyServer({ target: target ?? `http://127.0.0.1:${tunnelPort}`, ws: true, headers: { host: new URL(remoteOrigin).host, origin: remoteOrigin, ...(cookie ? { cookie } : {}) } })
   function authorize(request) {
     if (request.headers.host !== new URL(origin).host)
       return false

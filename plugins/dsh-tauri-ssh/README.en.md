@@ -1,5 +1,7 @@
 # DSH SSH management
 
+Remote discovery reads the login user's interactive shell initialization, followed by login initialization when needed, and passes the recovered PATH to DSH discovery and startup. Bash interactive initialization includes `.bashrc`. This requires Linux `timeout` and `setsid`; each shell invocation has a 10-second deadline and a 64 KiB output limit. Startup noise does not enter the message protocol. Failures report incomplete discovery, not proof of missing software. User shell initialization scripts can themselves have side effects. Aliases and shell functions are not installation paths; expose an actual executable on PATH.
+
 A DSH plugin bundled with Desktop. The `desktop` entry supplies settings UI; `SshManager` supplies both the Cordis service and the Desktop stdio worker. Rust owns the worker process and relays messages.
 
 Add a Linux host or SSH Host alias under Settings → Application → DSH connections. Empty username and SSH port inherit system SSH configuration. Authentication uses system OpenSSH, default keys, ssh-agent, ProxyJump and known_hosts. No private-key contents or passwords are stored. Complete host-key confirmation and key unlocking in a terminal first; the connection must support `ssh -o BatchMode=yes`. Host-key verification is never bypassed.

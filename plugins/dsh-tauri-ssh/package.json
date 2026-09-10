@@ -10,5 +10,6 @@
   "scripts": { "build": "node build.mjs" },
   "peerDependencies": { "@deepseek-ai/cordis": "*" },
   "peerDependenciesMeta": { "@deepseek-ai/cordis": { "optional": true } },
-  "dependencies": { "extract-zip": "2.0.1", "http-proxy": "1.18.1" }
+  "dependencies": { "extract-zip": "catalog:", "http-proxy": "catalog:" },
+  "devDependencies": { "esbuild": "catalog:" }
 }

@@ -1,14 +1,14 @@
 import { ArrowLeft, Delete } from '@gravity-ui/icons'
-import { Button, Checkbox, Chip, Description, Input, Label, Spinner, Switch } from '@heroui/react'
+import { Button, Checkbox, Chip, Description, Label, Spinner } from '@heroui/react'
 import { useOverlay } from '@overlastic/react'
+import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { If } from 'react-if-lite'
 import { store } from '@/store'
+import { silence } from '@/utils/silence'
 import { toast } from '@/utils/toast'
 import { useBackups } from '../hooks/use-backup'
-import { normalizeIntervalDays, normalizeRetentionCount } from '../utils/backup-settings'
-import { useAppConfig } from './../hooks/use-app-config'
 import { Item } from './item'
 import { Modal } from './modal'
 import { PanelHeader } from './panel-header'
@@ -23,10 +23,38 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}`
 }
 
+/**
+ * 轮询 health check 确认 DSH 服务已真正停止，避免文件锁冲突。
+ *  - 使用剩余 timeout 约束 in-flight 的 probe，防止无限挂起
+ *  - 仅当 health check 明确失败（非 transient 错误）时才视为已停止
+ *  - 超时后继续执行（shutdown 可能仍在进行中）
+ */
+async function waitForHarnessStopped(timeoutMs = 10_000, intervalMs = 500): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const remaining = timeoutMs - (Date.now() - start)
+    if (remaining <= 0)
+      break
+    const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('probe timeout')), remaining))
+    try {
+      await Promise.race([invoke('proxy_health_check'), timeoutPromise])
+      // 服务仍在运行，继续等待
+    }
+    catch (e) {
+      // probe 超时视为已停止
+      if (e instanceof Error && e.message === 'probe timeout')
+        return
+      // 非 transient 错误视为已停止；transient 错误（502 等）继续重试
+      if (!(e instanceof Error) || !/502|ECONNREFUSED|ETIMEDOUT/i.test(e.message))
+        return
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
+}
+
 export function ConfigBackup({ onBack }: ConfigBackupProps) {
   const { t } = useTranslation()
-  const { backups, loading, error, createBackup, restoreBackup, deleteBackup, updateAutoBackupSettings, busy } = useBackups()
-  const { data: config } = useAppConfig()
+  const { backups, loading, error, createBackup, restoreBackup, deleteBackup, busy, creating, restoring, deleting } = useBackups()
   const [dialogHolder, openDialog] = useOverlay(Modal, { type: 'holder' })
 
   const [includeCredentials, setIncludeCredentials] = useState(false)
@@ -38,7 +66,7 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
     }
     catch (err) {
       console.error('[ConfigBackup] create failed:', err)
-      toast(t('backup.failed_toast'), { variant: 'danger' })
+      toast(`${t('backup.failed_toast')}: ${String(err)}`, { variant: 'danger' })
     }
   }
 
@@ -54,12 +82,26 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
         ),
       })
     }
-    catch {
+    catch (e) {
+      silence(e, 'backup: dialog cancelled')
       return
     }
+    // 先停止 DSH 服务（释放 profile 目录的文件锁）
+    toast(t('backup.restored_stopped_toast'), { variant: 'accent' })
     try {
-      toast(t('backup.restored_stopped_toast'), { variant: 'accent' })
+      await invoke('shutdown_harness')
+    }
+    catch (e) {
+      console.warn('[ConfigBackup] shutdown_harness failed (may already be stopped):', e)
+    }
+    // 无论 shutdown 成功与否，都验证服务已真正停止
+    await waitForHarnessStopped()
+    try {
       await restoreBackup(timestamp, false)
+      // 还原后自动启动 DSH 服务（后台异步，不阻塞 UI）
+      invoke('launch_harness').catch((e) => {
+        console.warn('[ConfigBackup] launch_harness failed:', e)
+      })
       const key = toast(t('backup.restored_toast'), {
         variant: 'accent',
         timeout: 10_000,
@@ -74,7 +116,7 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
     }
     catch (err) {
       console.error('[ConfigBackup] restore failed:', err)
-      toast(t('backup.restore_failed'), { variant: 'danger' })
+      toast(`${t('backup.restore_failed')}: ${String(err)}`, { variant: 'danger' })
     }
   }
 
@@ -90,7 +132,8 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
         ),
       })
     }
-    catch {
+    catch (e) {
+      silence(e, 'backup: dialog cancelled')
       return
     }
     try {
@@ -99,7 +142,7 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
     }
     catch (err) {
       console.error('[ConfigBackup] restore as new failed:', err)
-      toast(t('backup.restore_failed'), { variant: 'danger' })
+      toast(`${t('backup.restore_failed')}: ${String(err)}`, { variant: 'danger' })
     }
   }
 
@@ -116,7 +159,8 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
         confirmText: t('backup.delete'),
       })
     }
-    catch {
+    catch (e) {
+      silence(e, 'backup: dialog cancelled')
       return
     }
     try {
@@ -130,7 +174,7 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 pl-4">
       <Button variant="tertiary" className="h-8 rounded-md" onPress={onBack}>
         <ArrowLeft className="size-3.5" />
         <span>{t('backup.back_to_profiles')}</span>
@@ -145,27 +189,29 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
           isDisabled={busy}
           onPress={handleCreate}
         >
-          <If cond={busy}>
+          <If cond={creating}>
             <Spinner size="sm" color="current" />
             <span>{t('backup.in_progress')}</span>
           </If>
-          <If cond={!busy}>
+          <If cond={!creating}>
             <span>{t('backup.now')}</span>
           </If>
         </Button>
-        <Checkbox
-          isSelected={includeCredentials}
-          onChange={(value: boolean) => setIncludeCredentials(value)}
-          aria-label={t('backup.include_credentials')}
-          className="shrink-0"
-        >
-          <Checkbox.Content>
-            <Checkbox.Control>
-              <Checkbox.Indicator />
-            </Checkbox.Control>
-          </Checkbox.Content>
-        </Checkbox>
-        <span className="text-xs text-ink">{t('backup.include_credentials')}</span>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <Checkbox
+            isSelected={includeCredentials}
+            onChange={(value: boolean) => setIncludeCredentials(value)}
+            aria-label={t('backup.include_credentials')}
+            className="shrink-0"
+          >
+            <Checkbox.Content>
+              <Checkbox.Control>
+                <Checkbox.Indicator />
+              </Checkbox.Control>
+            </Checkbox.Content>
+          </Checkbox>
+          <span className="text-xs text-ink">{t('backup.include_credentials')}</span>
+        </label>
         <If cond={includeCredentials}>
           <Description className="text-[10px] text-danger">
             {t('backup.credentials_warning')}
@@ -197,18 +243,36 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
                   )}
                   right={(
                     <>
-                      <Button size="sm" variant="tertiary" className="h-7 rounded-md" onPress={() => handleRestore(backup.timestamp)}>
-                        {t('backup.restore')}
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        className="h-7 rounded-md"
+                        isDisabled={busy}
+                        onPress={() => handleRestore(backup.timestamp)}
+                      >
+                        <If cond={restoring}>
+                          <Spinner size="sm" color="current" />
+                        </If>
+                        {restoring ? t('backup.restoring') : t('backup.restore')}
                       </Button>
-                      <Button size="sm" variant="tertiary" className="h-7 rounded-md" onPress={() => handleRestoreAsNew(backup.timestamp)}>
-                        {t('backup.restore_as_new')}
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        className="h-7 rounded-md"
+                        isDisabled={busy}
+                        onPress={() => handleRestoreAsNew(backup.timestamp)}
+                      >
+                        {restoring ? t('backup.restoring') : t('backup.restore_as_new')}
                       </Button>
                       <Chip
-                        className="rounded-md"
+                        className={`rounded-md${deleting ? ' cursor-not-allowed opacity-50' : ' cursor-pointer'}`}
                         variant="primary"
                         color="danger"
                         size="sm"
-                        onClick={() => handleDelete(backup.timestamp)}
+                        onClick={() => {
+                          if (!busy)
+                            handleDelete(backup.timestamp)
+                        }}
                       >
                         <Delete className="size-3" />
                       </Chip>
@@ -225,85 +289,6 @@ export function ConfigBackup({ onBack }: ConfigBackupProps) {
           </div>
         </If>
       </PanelState>
-
-      {/* 自动备份设置 */}
-      <PanelHeader title={t('backup.auto_section')} description="" />
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-ink">{t('backup.auto_enable')}</span>
-          <Switch
-            isSelected={config?.auto_backup_enabled ?? false}
-            onChange={value => updateAutoBackupSettings({ autoBackupEnabled: value })}
-            size="sm"
-          >
-            <Switch.Content>
-              <Switch.Control>
-                <Switch.Thumb />
-              </Switch.Control>
-            </Switch.Content>
-          </Switch>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-ink">
-            {t('backup.auto_interval')}
-            <span className="ml-1 text-muted">{t('backup.auto_interval_suffix')}</span>
-          </span>
-          <Input
-            key={config ? String(config.auto_backup_interval_days) : 'loading-interval'}
-            type="number"
-            variant="secondary"
-            min={1}
-            max={90}
-            defaultValue={String(config?.auto_backup_interval_days ?? 7)}
-            onBlur={e => updateAutoBackupSettings({ autoBackupIntervalDays: normalizeIntervalDays(e.target.value) })}
-            className="w-[80px]"
-          />
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-ink">{t('backup.auto_startup')}</span>
-          <Switch
-            isSelected={config?.auto_backup_on_startup ?? false}
-            onChange={value => updateAutoBackupSettings({ autoBackupOnStartup: value })}
-            size="sm"
-          >
-            <Switch.Content>
-              <Switch.Control>
-                <Switch.Thumb />
-              </Switch.Control>
-            </Switch.Content>
-          </Switch>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-ink">{t('backup.auto_change')}</span>
-          <Switch
-            isSelected={config?.auto_backup_on_change ?? false}
-            onChange={value => updateAutoBackupSettings({ autoBackupOnChange: value })}
-            size="sm"
-          >
-            <Switch.Content>
-              <Switch.Control>
-                <Switch.Thumb />
-              </Switch.Control>
-            </Switch.Content>
-          </Switch>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-ink">
-            {t('backup.auto_retention')}
-            <span className="ml-1 text-muted">{t('backup.auto_retention_suffix')}</span>
-          </span>
-          <Input
-            key={config ? String(config.backup_retention_count) : 'loading-retention'}
-            type="number"
-            variant="secondary"
-            min={1}
-            max={50}
-            defaultValue={String(config?.backup_retention_count ?? 10)}
-            onBlur={e => updateAutoBackupSettings({ backupRetentionCount: normalizeRetentionCount(e.target.value) })}
-            className="w-[80px]"
-          />
-        </div>
-      </div>
 
       {dialogHolder}
     </div>

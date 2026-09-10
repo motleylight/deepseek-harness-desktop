@@ -7,6 +7,7 @@ mod task;
 mod utils;
 
 pub fn run() {
+    service::user_path::initialize();
     // Wayland EGL workaround: AppImage bundles WebKitGTK may fail with
     // "Could not create default EGL display: EGL_BAD_PARAMETER" on Wayland
     // compositors (PikaOS/GNOME Wayland, Ubuntu 22.04+). Host WebKit (deb)

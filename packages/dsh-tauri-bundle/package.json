@@ -1,0 +1,18 @@
+{
+  "name": "dsh-tauri-bundle",
+  "version": "0.6.7",
+  "private": true,
+  "dependencies": {
+    "dsh-tauri": "workspace:*",
+    "dsh-tauri-connections": "workspace:*",
+    "dsh-tauri-panel": "workspace:*",
+    "dsh-tauri-panel-extension": "workspace:*",
+    "dsh-tauri-panel-scheduler": "workspace:*",
+    "dsh-tauri-pet": "workspace:*",
+    "dsh-tauri-rightclick": "workspace:*",
+    "dsh-tauri-session": "workspace:*",
+    "dsh-tauri-ssh": "workspace:*",
+    "dsh-tauri-ui": "workspace:*",
+    "dsh-tauri-worktree": "workspace:*"
+  }
+}
